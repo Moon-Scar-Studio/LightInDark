@@ -17,7 +17,6 @@ from tkinter import ttk
 import datetime
 import re
 
-# ===================== 仓库配置 =====================
 REPO_LIGHT_OWNER = "AfishMW"
 REPO_LIGHT_NAME   = "HSG_MOD"
 
@@ -25,9 +24,6 @@ REPO_LID_OWNER   = "hvtXsvc"
 REPO_LID_NAME    = "LightInDark_API"
 
 MIRROR_PREFIX = "https://ghproxy.com/"
-# ===================================================
-
-# ---------- 日志 ----------
 LOG_FILE = "update.log"
 
 def log_message(msg):
@@ -37,7 +33,6 @@ def log_message(msg):
     except:
         pass
 
-# ---------- 路径工具 ----------
 def get_program_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
@@ -55,7 +50,6 @@ def find_bepinex(start_dir):
         start_dir = parent
     return None
 
-# ---------- 进程检测（修正类型） ----------
 def is_process_running(name):
     TH32CS_SNAPPROCESS = 0x00000002
     
@@ -93,7 +87,6 @@ def is_process_running(name):
     kernel32.CloseHandle(snap)
     return found
 
-# ---------- 获取本地版本 ----------
 def get_local_versions(plugins_dir):
     ver_file = os.path.join(plugins_dir, "version.json")
     if not os.path.isfile(ver_file):
@@ -105,7 +98,6 @@ def get_local_versions(plugins_dir):
     except:
         return None, None
 
-# ---------- 获取远程版本 ----------
 def get_remote_version(owner, repo):
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
@@ -129,7 +121,6 @@ def version_compare(v1, v2):
             return 1 if a > b else -1
     return len(parts1) - len(parts2)
 
-# ---------- 获取 Release 资产下载链接 ----------
 def get_asset_download_urls(owner, repo):
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
@@ -149,7 +140,6 @@ def get_asset_download_urls(owner, repo):
         log_message(f"获取资产列表失败: {e}")
         return None
 
-# ---------- 下载文件 ----------
 def download_file(url, dest_path, progress_callback=None, max_retries=3):
     for attempt in range(max_retries):
         try:
@@ -176,8 +166,6 @@ def download_file(url, dest_path, progress_callback=None, max_retries=3):
             else:
                 return False
     return False
-
-# ---------- 进度窗口（tkinter） ----------
 class ProgressWindow:
     def __init__(self, title="更新进度"):
         self.root = tk.Tk()
@@ -241,7 +229,6 @@ class ProgressWindow:
         else:
             self.root.after(1500, self.root.quit)
 
-# ---------- 下载逻辑 ----------
 def download_files_with_progress(assets, save_dir, progress_window, mirror=False):
     files_to_download = ["Light.dll", "LightInDark.dll"]
     total_files = len(files_to_download)
@@ -293,7 +280,6 @@ def download_files_with_progress(assets, save_dir, progress_window, mirror=False
     else:
         return False, failed_files
 
-# ---------- 弹窗 ----------
 def ask_update_confirmation():
     result = ctypes.windll.user32.MessageBoxW(
         0,
@@ -309,7 +295,6 @@ def show_error_message(msg):
 def show_info_message(msg):
     ctypes.windll.user32.MessageBoxW(0, msg, "提示", 0x00000040)
 
-# ---------- 监听更新 ----------
 def listen_and_update():
     program_dir = get_program_dir()
     log_message("=== 监听更新模式启动 ===")
@@ -420,7 +405,6 @@ def listen_and_update():
     threading.Thread(target=download_thread, daemon=True).start()
     progress_win.run()
 
-# ---------- 快速检测 ----------
 def quick_check():
     program_dir = get_program_dir()
     bepinex_dir = find_bepinex(program_dir)
@@ -458,8 +442,6 @@ def quick_check():
         need_update = True
 
     print("need update" if need_update else "no need")
-
-# ---------- 主入口 ----------
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--listen":
         listen_and_update()
