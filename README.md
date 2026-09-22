@@ -60,6 +60,6 @@
 
 ## 官方群聊
 
-- [Discord](https://discord.gg/E6KjzMEJ3) | [QQ群](https://qm.qq.com/q/qQ6xvhECWI)  
+- [Discord](https://discord.gg/E6KjzMEJ3) | [QQ群](https://qm.qq.com/q/pzidBWHIxG)  
   
 
