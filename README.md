@@ -16,14 +16,16 @@
 
 # Light In Dark
 
-**※ 须知：本模组使用了AI工具进行辅助开发。**  
-**※ 须知：本模组使用了AI工具进行辅助开发。**  
-**※ 须知：本模组使用了AI工具进行辅助开发。**  
-※ 本项目隶属于Moon-Scar制作室。
+> [!WARNING]
+> 本模组使用了 AI 工具进行辅助开发。
+>
+> 本项目隶属于 Moon-Scar 制作室。
 
 ## 模组简介
 - 本项目是游戏Among Us的 **All-Client(全客户端)** 模组，添加了对游戏的优化、更多的职业、诸多功能等。  
+## 兼容性
 
+- 支持平台：Steam  
 
 ## Bug报告 & 做出贡献
 <p align="center">发现Bug、提出建议，您可以在本仓库的 <a href="https://github.com/AfishMW/LightInDark/issues/new/choose">Issue</a> 页面提交。</p>
@@ -48,7 +50,7 @@
 - 画师没注册过Github。帮帮我们。
 </details>
 
-### 参考来源
+## 参考来源
 
 **※ 不分先后顺序**
 - [FinalSuspect](https://github.com/Slok7565/FinalSuspect) 从该项目取得了服务器下拉选择框排版更改、背景图替换。  
@@ -58,8 +60,17 @@
 - [Reactor](https://github.com/NuclearPowered/Reactor) 从此项目了解了自定义RPC的正确注册方式。  
 - [MiraAPI](https://github.com/All-Of-Us-Mods/MiraAPI) 从此处了解了部分Role注册方式。
 
-## 官方群聊
+## 社区群聊
 
 - [Discord](https://discord.gg/E6KjzMEJ3) | [QQ群](https://qm.qq.com/q/pzidBWHIxG)  
-  
+
+  ## 许可证
+
+本项目源代码采用 **GNU General Public License v3.0** 授权，详见 [LICENSE](./LICENSE)。
+
+SPDX-License-Identifier: GPL-3.0-only
+
+你可以自由使用、修改和分发本项目，但分发修改版或二进制版时，必须保留版权声明与许可证，并提供对应的完整源代码。
+
+> 注意：Among Us、Innersloth LLC 的素材、第三方项目代码/素材、画师作品等不适用本项目的 GPL 授权，其版权与许可归各自权利人所有。详见 [NOTICE](./NOTICE) 或 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)。
 
