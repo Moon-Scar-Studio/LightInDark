@@ -1,4 +1,4 @@
-﻿using LightInDark.Core;
+using LightInDark.Core;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -32,6 +32,10 @@ public static class LightSettings
         /// 最高帧数上限 最多为150
         /// </summary>
         public int MaxFPS { get; set; } = 60;
+        /// <summary>
+        /// 跳过自定义加载动画（true 时静默加载，不播放加载页动画）
+        /// </summary>
+        public bool SkipLoadAnimation { get; set; } = false;
     }
     public static LightSettingsData LoadSettingData()
     {

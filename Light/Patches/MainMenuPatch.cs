@@ -73,7 +73,7 @@ public static class MainMenuPatch
     }
     [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
     [HarmonyPrefix]
-    public static bool Prefix(MainMenuManager __instance)
+    public static void Prefix(MainMenuManager __instance)
     {
         var plugin = IL2CPPChainloader.Instance.Plugins.Values.FirstOrDefault(p=>p.Metadata.Name== "MalumMenu");
         if (plugin != null)
@@ -88,14 +88,14 @@ public static class MainMenuPatch
             {
 
             }
-            return false;
+            return;
         }
         int pluginCount = IL2CPPChainloader.Instance.Plugins.Count;
         if(pluginCount != 2)
         {
             LightUtils.ShowCustomDisconnectWindow(Language.Translate("mainmenu.plugincount.ex"));
         }
-        return true;
+        return;
     }
     [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
     [HarmonyPostfix]
