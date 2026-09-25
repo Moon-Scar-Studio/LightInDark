@@ -37,9 +37,8 @@ namespace Light.Patches
                 __instance.OnTextChanged();
                 return false;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] DisconnectPopupPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return true;
             }
         }

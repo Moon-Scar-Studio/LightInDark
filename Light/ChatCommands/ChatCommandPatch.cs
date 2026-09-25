@@ -5,6 +5,7 @@ using Light.Patches;
 using Light.Roles.Crewmates;
 using Light.UI.HudUI;
 using Light.UI.Window;
+using LightInDark.Audio;
 using LightInDark.Core;
 using LightInDark.Game;
 using LightInDark.Roles;
@@ -65,6 +66,20 @@ public class PatchManager
             string cmd = parts[0].ToLower();
             switch (cmd)
             {
+                case "/play":
+                    try
+                    {
+                        SendLocalMessage("播放测试音效 TestSFX.mp3");
+                        SfxManager.Play("./Resources/SFX/TestSFX.mp3");
+                        __instance.freeChatField.Clear();
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        LightLogger.LogWarning($"/play 指令失败:{ex.Message}");
+                        __instance.freeChatField.Clear();
+                        return false;
+                    }
                 case "/test":
                     if (!isHost) return false;
                     SendLocalMessage("指令测试");

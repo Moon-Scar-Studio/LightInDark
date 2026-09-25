@@ -22,9 +22,8 @@ public static class ShowChatPatch
             if (!NeedShowFreeChat) return;
             HudManager.Instance.Chat.gameObject.SetActive(true);
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] ShowChatPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

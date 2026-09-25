@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net6.0</TargetFramework>
 		<LangVersion>latest</LangVersion>
@@ -178,5 +178,14 @@
 
     <Target Name="CopyToLibs" AfterTargets="Build">
         <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProjectDir)..\Libs\" SkipUnchangedFiles="true" />
+    </Target>
+
+    <Target Name="CopyToOutput" AfterTargets="Build">
+        <PropertyGroup>
+            <CustomOutDir>$(ProjectDir)..\Output\</CustomOutDir>
+        </PropertyGroup>
+        <MakeDir Directories="$(CustomOutDir)" Condition="!Exists('$(CustomOutDir)')" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(CustomOutDir)" SkipUnchangedFiles="true" />
+        <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(CustomOutDir)" Condition="Exists('$(TargetDir)$(TargetName).pdb')" SkipUnchangedFiles="true" />
     </Target>
 </Project>

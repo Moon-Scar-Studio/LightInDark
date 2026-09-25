@@ -35,9 +35,8 @@ public static class AddLobbyDecorations
             SpawnSprite(box != null ? box : __instance.transform, "ReadyRoomCake",
                 "Light.Resources.Map.Ready.ReadyRoomCake.png", CakePosition, CakeScale, 100);
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] AddLobbyDecorations.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 

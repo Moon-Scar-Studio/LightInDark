@@ -1,4 +1,5 @@
 {
+  "mainmenu.plugincount.ex": "<b><color=red>警告</color></b><br>检测到<b>超过 2 </b>的Plugin数!<br>LID本身与绝大多数模组不兼容，除非你安装的模组特殊说明！<br该警告会在你加入房间时向房间所有人发送。",
   "help.tabs.search": "搜索",
   "help.tabs.myInfo": "我的职业",
   "help.tabs.roles": "职业",

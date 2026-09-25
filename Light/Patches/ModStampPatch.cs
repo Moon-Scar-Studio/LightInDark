@@ -30,9 +30,8 @@ public static class ModStampPatch
                 if (sr != null) sr.sprite = ResourceHelper.LoadSpriteFromResource("Light.Resources.ModStamp.png");
             });
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] ModStampPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

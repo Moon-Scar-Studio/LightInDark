@@ -9,7 +9,7 @@ namespace LightInDark.Configuration
     ///  2. 把 cfg 中的值写回该静态成员（字段 SetValue / 属性 SetValue），Role 代码直接读静态成员即可；
     ///  3. 在 MOD设置 UI 中自动生成编辑控件。
     /// 每个职业还自动注册两个默认配置项：MaxCount（最大数量）与 Chance（生成概率），无需标记。
-    /// 若某个配置项没有声明在 Role 类里，则调用方必须手动通过形参传递（例如构造 AbilityButtonConfig 时传入）。
+    /// 若某个配置项没有声明在 Role 类里，则调用方必须手动通过形参传递（例如构造 RoleButtonConfig 时传入）。
     /// </summary>
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
     public sealed class RoleOptionAttribute : Attribute

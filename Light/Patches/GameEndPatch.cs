@@ -70,9 +70,8 @@ public static class GameEndPatch
                 SaveReplayToFile();
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            LightLogger.LogWarning("[Light] GameEndPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 

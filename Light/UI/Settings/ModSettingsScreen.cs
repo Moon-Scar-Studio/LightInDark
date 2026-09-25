@@ -314,7 +314,7 @@ public static class ModSettingsScreen
 
             // 该分类下的职业列表
             var inner = new List<GUIWidget?>();
-            var roles = new List<DefinedRole>();
+            var roles = new List<Role>();
             switch (_category)
             {
                 case 0:

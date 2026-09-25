@@ -1,28 +1,23 @@
 using AmongUs.GameOptions;
-using LightInDark;
 using LightInDark.Configuration;
-using LightInDark.Game;
-using LightInDark.Roles;
 using LightInDark.Core;
+using LightInDark.Roles;
+using System;
 
 namespace Light.Roles.Vanilla;
 
 /// <summary>默认内鬼职业：未分配自定义职业时的默认占位（不参与自定义分配）。</summary>
-public class VanillaImpostor : DefinedRole
+public class VanillaImpostor : Role
 {
     public static readonly VanillaImpostor Instance = new();
-    public VanillaImpostor() : base(LightInDark.Color.Red, RoleCategory.Impostor) { }
 
     public override string CodeName => "VanillaImpostor";
+    public override LightInDark.Color Color => LightInDark.Color.Red;
+    public override RoleCategory Category => RoleCategory.Impostor;
     public override string IntroBlurbKey => "Role.VanillaImpostor.intro";
     public override string SkillDescriptionKey => "Role.VanillaImpostor.skill";
+    public override bool CanSpawnIn() => false;
 
-    public override RuntimeRole CreateInstance(Player player, int[] arguments) => new VanillaImpostorRuntime(this, player, arguments);
-}
-
-public class VanillaImpostorRuntime : RuntimeRole
-{
-    public VanillaImpostorRuntime(DefinedRole definition, Player player, int[] arguments) : base(definition, player, arguments) { }
     protected override void OnActivated()
     {
         try
@@ -32,27 +27,23 @@ public class VanillaImpostorRuntime : RuntimeRole
         }
         catch (Exception ex)
         {
-            LightLogger.LogError("[VanillaRoles.OnActivated]", ex);
+            LightLogger.LogError("[VanillaImpostor.OnActivated]", ex);
         }
     }
 }
 
 /// <summary>默认船员职业：未分配自定义职业时的默认占位（不参与自定义分配）。</summary>
-public class VanillaCrewmate : DefinedRole
+public class VanillaCrewmate : Role
 {
     public static readonly VanillaCrewmate Instance = new();
-    public VanillaCrewmate() : base(LightInDark.Color.Green, RoleCategory.Crewmate) { }
 
     public override string CodeName => "VanillaCrewmate";
+    public override LightInDark.Color Color => LightInDark.Color.Green;
+    public override RoleCategory Category => RoleCategory.Crewmate;
     public override string IntroBlurbKey => "Role.VanillaCrewmate.intro";
     public override string SkillDescriptionKey => "Role.VanillaCrewmate.skill";
+    public override bool CanSpawnIn() => false;
 
-    public override RuntimeRole CreateInstance(Player player, int[] arguments) => new VanillaCrewmateRuntime(this, player, arguments);
-}
-
-public class VanillaCrewmateRuntime : RuntimeRole
-{
-    public VanillaCrewmateRuntime(DefinedRole definition, Player player, int[] arguments) : base(definition, player, arguments) { }
     protected override void OnActivated()
     {
         try
@@ -62,7 +53,7 @@ public class VanillaCrewmateRuntime : RuntimeRole
         }
         catch (Exception ex)
         {
-            LightLogger.LogError("[VanillaRoles.OnActivated]", ex);
+            LightLogger.LogError("[VanillaCrewmate.OnActivated]", ex);
         }
     }
 }

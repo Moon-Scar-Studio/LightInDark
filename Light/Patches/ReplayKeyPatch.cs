@@ -37,9 +37,8 @@ public static class ReplayKeyPatch
                 _isShowing = ReplayPanel.Toggle();
             }
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] ReplayKeyPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

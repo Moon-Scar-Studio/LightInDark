@@ -372,9 +372,8 @@ public static class LoadPatch
 
             return false;
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] LoadPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
             return false;
         }
     }
@@ -385,9 +384,8 @@ public static class LoadPatch
         {
             __instance.doneLoadingRefdata = cachedDoneLoadingRefData;
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] LoadPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

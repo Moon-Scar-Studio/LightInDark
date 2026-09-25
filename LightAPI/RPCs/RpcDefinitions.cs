@@ -323,7 +323,7 @@ namespace LightInDark.RPCs
     public static class GameActions
     {
         /// <summary>分配角色给玩家（同步）</summary>
-        public static void AssignRole(Game.Player player, DefinedRole role)
+        public static void AssignRole(Game.Player player, Role role)
         {
             try
             {

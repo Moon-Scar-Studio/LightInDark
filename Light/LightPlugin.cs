@@ -12,7 +12,6 @@ using LightInDark.Roles;
 using LightInDark.RPCs;
 using Light.ChatCommands;
 using Light.Patches;
-using Light.Utilities;
 using Light.Roles.Crewmates;
 using Light.Roles.Vanilla;
 using LightInDark.Core;

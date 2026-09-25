@@ -15,7 +15,7 @@ namespace LightInDark.Game
         bool IsLocal { get; }
         string Name { get; }
         Vector2 Position { get; }
-        RuntimeRole Role { get; }
+        Role Role { get; }
     }
 
     public interface IBindPlayer
@@ -36,7 +36,7 @@ namespace LightInDark.Game
         public bool IsLocal => Control == PlayerControl.LocalPlayer;
         public string Name => Control?.Data?.PlayerName ?? "Unknown";
         public Vector2 Position => Control?.transform?.position ?? Vector2.zero;
-        public RuntimeRole Role { get; internal set; }
+        public Role Role { get; internal set; }
 
         public Player MyPlayer => this;
         public bool AmOwner => IsLocal;
@@ -71,7 +71,7 @@ namespace LightInDark.Game
         }
 
         // ---- 角色 ----
-        public RoleCategory? RoleCategory => Role?.Definition?.Category;
+        public RoleCategory? RoleCategory => Role?.Category;
 
         public Player(PlayerControl control)
         {
@@ -89,7 +89,7 @@ namespace LightInDark.Game
         /// <summary>
         /// 切换角色（本地立即切换，并发送RPC同步）
         /// </summary>
-        public void SetRole(DefinedRole newRole, int[] arguments = null)
+        public void SetRole(Role newRole, int[] arguments = null)
         {
             try
             {
@@ -116,7 +116,7 @@ namespace LightInDark.Game
         /// <summary>
         /// 仅本地设置角色（用于RPC接收）
         /// </summary>
-        internal void SetRoleLocal(DefinedRole newRole, int[] arguments = null)
+        internal void SetRoleLocal(Role newRole, int[] arguments = null)
         {
             try
             {
@@ -164,7 +164,7 @@ namespace LightInDark.Game
         {
             try
             {
-                return Role?.Definition?.Name == roleName;
+                return Role?.Name == roleName;
             }
             catch (Exception ex)
             {
@@ -173,7 +173,7 @@ namespace LightInDark.Game
             }
         }
 
-        public bool Is<T>() where T : RuntimeRole
+        public bool Is<T>() where T : Role
         {
             try
             {

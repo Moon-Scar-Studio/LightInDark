@@ -20,9 +20,8 @@ public static class DisableLobbyEnginePowerPatch
                 RightEngine.gameObject.SetActive(!RightEngine.gameObject.activeSelf);
             }
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] DisableLobbyEnginePowerPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

@@ -47,9 +47,8 @@ public static class VersionPatch
             apClone.updateAlways = true;
 
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            LightLogger.LogWarning("[Light] VersionPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

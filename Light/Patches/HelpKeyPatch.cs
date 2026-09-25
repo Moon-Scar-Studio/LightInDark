@@ -25,9 +25,8 @@ public static class HelpKeyPatch
                 else HelpScreen.TryOpenMyInfo();
             }
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] HelpKeyPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 
@@ -63,9 +62,8 @@ public static class MeetingCloseHelpPatch
         {
             HelpScreen.TryCloseHelpScreen();
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] MeetingCloseHelpPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }
@@ -80,9 +78,8 @@ public static class ExileCloseHelpPatch
         {
             HelpScreen.TryCloseHelpScreen();
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] ExileCloseHelpPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

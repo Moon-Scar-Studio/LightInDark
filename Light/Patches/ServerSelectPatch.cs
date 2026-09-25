@@ -30,9 +30,8 @@ public class ServerSelectPatch
             __instance.capacityOption.ValidRange.max = LightUtils.IsCustomServer() ? 24 : 15;
             __instance.capacityOption.ValidRange.min = 4;
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] ServerSelectPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 }

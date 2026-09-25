@@ -6,7 +6,7 @@ namespace LightInDark.Modifiers
 {
     /// <summary>
     /// 修饰器运行时实例，绑定到某个玩家。
-    /// 与职业（RuntimeRole）不同，修饰器可叠加、可随时增删。
+    /// 与职业（Role）不同，修饰器可叠加、可随时增删。
     /// </summary>
     public abstract class RuntimeModifier : IGameOperator, ILifespan
     {

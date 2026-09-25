@@ -1,4 +1,5 @@
 using AmongUs.Data;
+using BepInEx.Unity.IL2CPP;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Light.Components;
@@ -8,6 +9,7 @@ using Light.UI.Window;
 using Light.Utilities;
 using LightInDark.Core;
 using LightInDark.Events;
+using LightInDark.Language;
 using LightInDark.Utilities;
 using System;
 using System.Collections;
@@ -69,7 +71,32 @@ public static class MainMenuPatch
             return new Dictionary<string, PassiveButton>();
         }
     }
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
+    [HarmonyPrefix]
+    public static bool Prefix(MainMenuManager __instance)
+    {
+        var plugin = IL2CPPChainloader.Instance.Plugins.Values.FirstOrDefault(p=>p.Metadata.Name== "MalumMenu");
+        if (plugin != null)
+        {
+            LightLogger.LogError("警告形式的错误：疑似安装作弊插件。");
+            Harmony.UnpatchAll();
+            try
+            {
+                Application.Quit();
+            }
+            catch
+            {
 
+            }
+            return false;
+        }
+        int pluginCount = IL2CPPChainloader.Instance.Plugins.Count;
+        if(pluginCount != 2)
+        {
+            LightUtils.ShowCustomDisconnectWindow(Language.Translate("mainmenu.plugincount.ex"));
+        }
+        return true;
+    }
     [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
     [HarmonyPostfix]
     public static void Postfix(MainMenuManager __instance)
@@ -835,9 +862,8 @@ public static class MainMenuPatch
             if (_bgMoved && _galleryPanel != null && _galleryPanel._bgObj == null)
                 _galleryPanel.RestoreBackground();
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] LateUpdate NRE: " + ex.Message + "\n" + ex.StackTrace);
             _rightPanel = null;
             _lightScreen = null;
             _lightSubScreen = null;
@@ -858,9 +884,8 @@ public static class MainMenuPatch
             if (_lightSubScreen != null) _lightSubScreen.SetActive(false);
             if (_galleryPanel != null) _galleryPanel.Hide();
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] MainMenuPatch.ShowRightPanel NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 
@@ -878,9 +903,8 @@ public static class MainMenuPatch
             DestroyableSingleton<AccountManager>.Instance
                 ?.transform.FindChild("AccountTab/AccountWindow")?.gameObject.SetActive(false);
         }
-        catch (System.Exception ex)
+        catch (System.Exception)
         {
-            LightLogger.LogWarning("[Light] MainMenuPatch.HideRightPanel NRE: " + ex.Message + "\n" + ex.StackTrace);
         }
     }
 

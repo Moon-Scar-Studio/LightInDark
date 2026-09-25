@@ -38,9 +38,8 @@ namespace Light.Patches
                 LightInDark.Modifiers.ModifierManager.ClearAll();
                 LightLogger.Log("[Patch] 游戏开始，已保持原版结束检查开启，自定义胜负在 RpcEndGame 层处理");
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] GameManagerStartPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -55,9 +54,8 @@ namespace Light.Patches
                 __result = false;
                 return false;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockTaskCompletionPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return false;
             }
         }
@@ -76,9 +74,8 @@ namespace Light.Patches
                 // 只有自定义逻辑明确取消时才拦下。
                 return !ev.IsCanceled;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockEndGameViaTasksPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return false;
             }
         }
@@ -94,9 +91,8 @@ namespace Light.Patches
                 __result = false;
                 return false;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockGameOverDueToDeathPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return false;
             }
         }
@@ -137,9 +133,8 @@ namespace Light.Patches
                 // 只分配自定义职业，原版 SelectRoles 继续运行处理兜底
                 return true;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] RoleSelectPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return true;
             }
         }
@@ -154,9 +149,8 @@ namespace Light.Patches
             {
                 return false;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockGhostRolePatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return false;
             }
         }
@@ -172,9 +166,8 @@ namespace Light.Patches
                 if (HudManager.Instance != null && HudManager.Instance.AbilityButton != null)
                     HudManager.Instance.AbilityButton.gameObject.SetActive(false);
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockRoleInitializePatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -190,9 +183,8 @@ namespace Light.Patches
                     HudManager.Instance.AbilityButton.gameObject.SetActive(false);
                 return false;
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] BlockAbilityButtonPatch.Prefix NRE: " + ex.Message + "\n" + ex.StackTrace);
                 return false;
             }
         }
@@ -222,9 +214,8 @@ namespace Light.Patches
                         __instance.PlayerId, state, null, LightPlayerDataManager.CurrentMeetingNumber);
                 }
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] PlayerDeathPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -255,9 +246,8 @@ namespace Light.Patches
                 
                 LightPlayerDataManager.UpdateTaskProgress(__instance.PlayerId, completed, total);
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] TaskCompletePatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -277,9 +267,8 @@ namespace Light.Patches
                 EventTriggers.OnMeetingStart(__instance, target, isEmergency);
                 LightLogger.Log($"[Patch] {(isEmergency ? "紧急会议" : "尸体报告")} by {__instance.name}");
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] ReportDeadBodyPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -293,9 +282,8 @@ namespace Light.Patches
             {
                 EventTriggers.OnPlayerVote(PlayerControl.LocalPlayer, suspectStateIdx);
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] MeetingVotePatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -317,9 +305,8 @@ namespace Light.Patches
                     LightPlayerDataManager.SetDisconnected(data.Character.PlayerId);
                 }
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] PlayerLeftPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -339,9 +326,8 @@ namespace Light.Patches
                 LightPlayerDataManager.CurrentMeetingNumber++;
                 EventTriggers.OnPlayerExile(null);
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] ExileBeginPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }
@@ -359,9 +345,8 @@ namespace Light.Patches
             {
                 EventTriggers.OnEmergencyButtonBroken();
             }
-            catch (System.Exception ex)
+            catch (System.Exception)
             {
-                LightLogger.LogWarning("[Light] EmergencyButtonBrokenPatch.Postfix NRE: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }

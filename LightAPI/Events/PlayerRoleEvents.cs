@@ -6,22 +6,22 @@ namespace LightInDark.Events
     //  角色事件
     // =====================================================================
 
-    /// <summary>自定义角色被设置到玩家时触发。</summary>
+    /// <summary>自定义职业被设置到玩家时触发。</summary>
     public class RoleAssignedEvent : BasePlayerEvent
     {
-        public DefinedRole Role { get; init; }
+        public Role Role { get; init; }
         public int[] Arguments { get; init; } = System.Array.Empty<int>();
         public RoleAssignedEvent() { }
-        public RoleAssignedEvent(PlayerControl player, DefinedRole role, int[] arguments = null) : base(player) { Role = role; Arguments = arguments ?? System.Array.Empty<int>(); }
+        public RoleAssignedEvent(PlayerControl player, Role role, int[] arguments = null) : base(player) { Role = role; Arguments = arguments ?? System.Array.Empty<int>(); }
     }
 
     /// <summary>换职前触发（可阻止）。</summary>
     public class PlayerTryToChangeRoleEvent : BaseCancelablePlayerEvent
     {
-        public RuntimeRole OldRole { get; init; }
-        public DefinedRole NewRole { get; init; }
+        public Role OldRole { get; init; }
+        public Role NewRole { get; init; }
         public PlayerTryToChangeRoleEvent() { }
-        public PlayerTryToChangeRoleEvent(PlayerControl player, RuntimeRole oldRole, DefinedRole newRole) : base(player) { OldRole = oldRole; NewRole = newRole; }
+        public PlayerTryToChangeRoleEvent(PlayerControl player, Role oldRole, Role newRole) : base(player) { OldRole = oldRole; NewRole = newRole; }
     }
 
     /// <summary>分配确定前触发（供分配机修正分配表）。</summary>
@@ -31,25 +31,25 @@ namespace LightInDark.Events
         public PreFixAssignmentEvent(IRoleTable table) { Table = table; }
     }
 
-    /// <summary>角色已设置到玩家时触发。</summary>
+    /// <summary>职业已设置到玩家时触发。</summary>
     public class PlayerRoleSetEvent : BasePlayerEvent
     {
-        public RuntimeRole Role { get; init; }
+        public Role Role { get; init; }
         public PlayerRoleSetEvent() { }
-        public PlayerRoleSetEvent(PlayerControl player, RuntimeRole role) : base(player) { Role = role; }
+        public PlayerRoleSetEvent(PlayerControl player, Role role) : base(player) { Role = role; }
     }
 
-    /// <summary>角色交换时触发。</summary>
+    /// <summary>职业交换时触发。</summary>
     public class PlayerRoleSwapEvent : BasePlayerEvent
     {
         public enum SwapType { Swap, Duplicate }
 
         public PlayerControl Source { get; init; }
         public PlayerControl Destination => Player;
-        public DefinedRole Role { get; init; }
+        public Role Role { get; init; }
         public SwapType Type { get; init; }
         public PlayerRoleSwapEvent() { }
-        public PlayerRoleSwapEvent(PlayerControl source, PlayerControl destination, DefinedRole role, SwapType type) : base(destination)
+        public PlayerRoleSwapEvent(PlayerControl source, PlayerControl destination, Role role, SwapType type) : base(destination)
         { Source = source; Role = role; Type = type; }
     }
 

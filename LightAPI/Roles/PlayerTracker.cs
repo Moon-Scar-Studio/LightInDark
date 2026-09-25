@@ -45,7 +45,7 @@ namespace LightInDark.Roles
         }
 
         /// <summary>
-        /// 每帧更新（由 AbilityButton.Update 调用）
+        /// 每帧更新（由按钮系统调用）
         /// </summary>
         public void Update()
         {

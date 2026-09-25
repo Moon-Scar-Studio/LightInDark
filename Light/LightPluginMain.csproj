@@ -47,6 +47,9 @@
 		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(CustomOutDir)" />
 		<Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(CustomOutDir)" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
 
+		<!-- 单独构建本插件时，也把 API 产物复制到 Output -->
+		<Copy SourceFiles="$(ProjectDir)..\Libs\LightInDark.dll" DestinationFolder="$(CustomOutDir)" Condition="Exists('$(ProjectDir)..\Libs\LightInDark.dll')" />
+
 		<ItemGroup>
 			<FilteredDependencies Include="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)' == 'Light' OR '%(Filename)' == 'LightInDark'" />
 		</ItemGroup>

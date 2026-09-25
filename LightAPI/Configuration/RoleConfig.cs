@@ -88,7 +88,7 @@ namespace LightInDark.Configuration
         ///  1. 默认项 MaxCount / Chance（cfg 绑定，默认取 Allocation）；
         ///  2. 反射扫描 Role 类型上 [RoleOption] 的静态字段/属性，cfg 双向绑定。
         /// </summary>
-        public static void RegisterRole(DefinedRole role)
+        public static void RegisterRole(Role role)
         {
             try
             {
@@ -143,7 +143,7 @@ namespace LightInDark.Configuration
             }
         }
 
-        private static void ScanRoleMembers(DefinedRole role, List<RoleOptionEntry> list)
+        private static void ScanRoleMembers(Role role, List<RoleOptionEntry> list)
         {
             var type = role.GetType();
             const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;

@@ -260,12 +260,12 @@ public static class HelpScreen
         try
         {
             var gui = LIDGUI.Instance;
-            var listed = new List<DefinedRole>();
+            var listed = new List<Role>();
             var inner = new List<GUIWidget?>();
 
             void AddCategory(RoleCategory category, string title, Color titleColor)
             {
-                var roles = new List<DefinedRole>();
+                var roles = new List<Role>();
                 foreach (var role in RoleRegistry.AllRoles)
                     if (role.Category == category) roles.Add(role);
                 if (roles.Count == 0) return;
@@ -309,14 +309,14 @@ public static class HelpScreen
         try
         {
             var gui = LIDGUI.Instance;
-            var role = LightGameManager.Instance?.LocalPlayer?.Role?.Definition;
+            var role = LightGameManager.Instance?.LocalPlayer?.Role;
             var inner = new List<GUIWidget?>();
 
             if (role != null)
             {
                 var name = gui.ColorTextComponent(role.Color, new RawTextComponent(role.Name)).GetString();
                 inner.Add(gui.RawButton(GUIAlignment.Center, RoleButtonAttr, name,
-                    _ => OpenAssignableHelp(new List<DefinedRole> { role }, 0)));
+                    _ => OpenAssignableHelp(new List<Role> { role }, 0)));
             }
             else
             {
@@ -385,7 +385,7 @@ public static class HelpScreen
                 return gui.VerticalHolder(GUIAlignment.Left, inner);
             }
 
-            var matched = new List<DefinedRole>();
+            var matched = new List<Role>();
             foreach (var role in RoleRegistry.AllRoles)
             {
                 if (role.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
@@ -564,7 +564,7 @@ public static class HelpScreen
     // 职业详情子窗口
     // =====================================================================
 
-    private static void OpenAssignableHelp(List<DefinedRole> roles, int index)
+    private static void OpenAssignableHelp(List<Role> roles, int index)
     {
         try
         {
@@ -609,7 +609,7 @@ public static class HelpScreen
         }
     }
 
-    private static GUIWidget BuildRoleDetailWidget(DefinedRole role)
+    private static GUIWidget BuildRoleDetailWidget(Role role)
     {
         try
         {
@@ -677,7 +677,7 @@ public static class HelpScreen
 
     /// <summary>分配信息行（MaxCount==0 显示不参与分配）</summary>
     /// <summary>分配信息行（读取 RoleConfig 注册表当前值：最大数量/生成概率，MaxCount==0 显示不参与分配）。</summary>
-    private static string GetAllocationLine(DefinedRole role)
+    private static string GetAllocationLine(Role role)
     {
         try
         {

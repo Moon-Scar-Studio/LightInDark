@@ -41,11 +41,11 @@ public class StandardRoleAllocator : IRoleAllocator
     }
 
     /// <summary>构建某类别的抽选池（仅参与分配且配置最大数量>0 的职业）</summary>
-    private List<DefinedRole> BuildPool(RoleCategory category)
+    private List<Role> BuildPool(RoleCategory category)
         => RoleRegistry.AllRoles.Where(r => r.Category == category && GetMaxCount(r) > 0).ToList();
 
     /// <summary>抽选：先保证必出职业，再按概率补足，直到达到本类别数量上限</summary>
-    private void Roll(RoleTable table, List<byte> players, List<DefinedRole> pool, int globalMax)
+    private void Roll(RoleTable table, List<byte> players, List<Role> pool, int globalMax)
     {
         try
         {
@@ -85,7 +85,7 @@ public class StandardRoleAllocator : IRoleAllocator
     }
 
     /// <summary>按概率从池中抽选一个职业，未命中返回 null（概率由配置/默认决定）</summary>
-    private DefinedRole PickByChance(List<DefinedRole> pool)
+    private Role PickByChance(List<Role> pool)
     {
         try
         {
@@ -101,10 +101,10 @@ public class StandardRoleAllocator : IRoleAllocator
     }
 
     /// <summary>读取职业最大数量（配置优先，回退到代码 Allocation 默认）。</summary>
-    public static int GetMaxCount(DefinedRole role)
+    public static int GetMaxCount(Role role)
         => RoleConfig.GetRoleCount(role.CodeName, role.Allocation.MaxCount);
 
     /// <summary>读取职业分配概率（配置优先，回退到代码 Allocation 默认）。</summary>
-    public static int GetChance(DefinedRole role)
+    public static int GetChance(Role role)
         => RoleConfig.GetRoleChance(role.CodeName, role.Allocation.Chance);
 }

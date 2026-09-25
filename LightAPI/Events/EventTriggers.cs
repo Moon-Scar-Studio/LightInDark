@@ -76,11 +76,12 @@ namespace LightInDark.Events
         public static PlayerUpdateVentStateEvent OnPlayerUpdateVentState(PlayerControl player) { var ev = new PlayerUpdateVentStateEvent { Player = player }; EventSystem.RunEvent(ev); return ev; }
 
         // ── 角色 ──
-        public static void OnRoleAssigned(PlayerControl player, DefinedRole role, int[] args = null) => EventSystem.RunEvent(new RoleAssignedEvent { Player = player, Role = role, Arguments = args ?? System.Array.Empty<int>() });
-        public static bool OnPlayerTryChangeRole(PlayerControl player, RuntimeRole oldRole, DefinedRole newRole) { var ev = new PlayerTryToChangeRoleEvent { Player = player, OldRole = oldRole, NewRole = newRole }; EventSystem.RunEvent(ev); return !ev.IsCanceled; }
+        // ── 角色 ──
+        public static void OnRoleAssigned(PlayerControl player, Role role, int[] args = null) => EventSystem.RunEvent(new RoleAssignedEvent { Player = player, Role = role, Arguments = args ?? System.Array.Empty<int>() });
+        public static bool OnPlayerTryChangeRole(PlayerControl player, Role oldRole, Role newRole) { var ev = new PlayerTryToChangeRoleEvent { Player = player, OldRole = oldRole, NewRole = newRole }; EventSystem.RunEvent(ev); return !ev.IsCanceled; }
         public static void OnPreFixAssignment(IRoleTable table) => EventSystem.RunEvent(new PreFixAssignmentEvent(table));
-        public static void OnPlayerRoleSet(PlayerControl player, RuntimeRole role) => EventSystem.RunEvent(new PlayerRoleSetEvent { Player = player, Role = role });
-        public static void OnPlayerRoleSwap(PlayerControl src, PlayerControl dst, DefinedRole role, PlayerRoleSwapEvent.SwapType type) => EventSystem.RunEvent(new PlayerRoleSwapEvent { Player = dst, Source = src, Role = role, Type = type });
+        public static void OnPlayerRoleSet(PlayerControl player, Role role) => EventSystem.RunEvent(new PlayerRoleSetEvent { Player = player, Role = role });
+        public static void OnPlayerRoleSwap(PlayerControl src, PlayerControl dst, Role role, PlayerRoleSwapEvent.SwapType type) => EventSystem.RunEvent(new PlayerRoleSwapEvent { Player = dst, Source = src, Role = role, Type = type });
         public static PlayerCheckWinEvent OnPlayerCheckWin(PlayerControl player, string gameEnd = "") { var ev = new PlayerCheckWinEvent { Player = player, GameEnd = gameEnd }; EventSystem.RunEvent(ev); return ev; }
         public static PlayerCheckExtraWinEvent OnPlayerCheckExtraWin(PlayerControl player, string gameEnd = "") { var ev = new PlayerCheckExtraWinEvent { Player = player, GameEnd = gameEnd }; EventSystem.RunEvent(ev); return ev; }
         public static PlayerBlockWinEvent OnPlayerBlockWin(PlayerControl player, bool isWin, string gameEnd = "") { var ev = new PlayerBlockWinEvent { Player = player, IsWin = isWin, GameEnd = gameEnd }; EventSystem.RunEvent(ev); return ev; }

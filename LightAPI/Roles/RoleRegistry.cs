@@ -6,24 +6,24 @@ using LightInDark.Core;
 namespace LightInDark.Roles
 {
     /// <summary>
-    /// 角色注册中心。在插件主类 Load() 中调用 RoleRegistry.Register() 注册角色。
-    /// 防止运行时反射扫描的性能消耗。
+    /// 职业注册中心。在插件主类 Load() 中调用 RoleRegistry.Register() 注册职业。
+    /// 每个职业注册一个"定义实例"（MyPlayer==null），分配时经 CreateInstance 生成绑定玩家的运行时实例。
     /// </summary>
     public static class RoleRegistry
     {
-        private static readonly Dictionary<string, DefinedRole> _roles = new();
-        private static readonly Dictionary<Type, DefinedRole> _rolesByType = new();
-        private static readonly Dictionary<int, DefinedRole> _rolesById = new();
+        private static readonly Dictionary<string, Role> _roles = new();
+        private static readonly Dictionary<Type, Role> _rolesByType = new();
+        private static readonly Dictionary<int, Role> _rolesById = new();
         private static int _nextId;
 
-        /// <summary>已注册的所有角色定义</summary>
-        public static IReadOnlyCollection<DefinedRole> AllRoles => _roles.Values;
+        /// <summary>已注册的所有职业定义</summary>
+        public static IReadOnlyCollection<Role> AllRoles => _roles.Values;
 
         /// <summary>
-        /// 注册角色（校验 CodeName 必须重写、Intro 不可为空；不合格则拒绝并告警）。
+        /// 注册职业（校验 CodeName 必须重写、Intro 不可为空；不合格则拒绝并告警）。
         /// 在插件主类 Load() 中调用。
         /// </summary>
-        public static T Register<T>() where T : DefinedRole, new()
+        public static T Register<T>() where T : Role, new()
         {
             try
             {
@@ -37,15 +37,15 @@ namespace LightInDark.Roles
         }
 
         /// <summary>
-        /// 注册角色实例。校验失败（CodeName 为空、已注册、或 Intro 为空）时拒绝注册并返回 default。
+        /// 注册职业实例。校验失败（CodeName 为空、已注册、或 Intro 为空）时拒绝注册并返回 default。
         /// </summary>
-        public static T Register<T>(T role) where T : DefinedRole
+        public static T Register<T>(T role) where T : Role
         {
             try
             {
                 if (!IsValid(role, out string reason))
                 {
-                    LightLogger.LogWarning($"拒绝注册角色 {role?.CodeName ?? "null"}：{reason}");
+                    LightLogger.LogWarning($"拒绝注册职业 {role?.CodeName ?? "null"}：{reason}");
                     return default;
                 }
 
@@ -66,12 +66,12 @@ namespace LightInDark.Roles
         }
 
         /// <summary>
-        /// 尝试注册角色，返回是否成功。
+        /// 尝试注册职业，返回是否成功。
         /// </summary>
         /// <param name="logPrefix">错误日志前缀，默认 "{CodeName} 注册失败"。</param>
         /// <param name="includeStackTrace">是否输出异常堆栈（默认 true，等效 LightLogger.LogError(msg, ex)）。</param>
         public static bool TryRegister<T>(string logPrefix = null, bool includeStackTrace = true)
-            where T : DefinedRole, new()
+            where T : Role, new()
         {
             try
             {
@@ -88,15 +88,15 @@ namespace LightInDark.Roles
             }
             catch (Exception ex)
             {
-                string msg = logPrefix ?? "角色注册失败";
+                string msg = logPrefix ?? "职业注册失败";
                 if (includeStackTrace) LightLogger.LogError(msg, ex);
                 else LightLogger.LogError(msg);
                 return false;
             }
         }
 
-        /// <summary>校验角色：CodeName 必须非空，Intro 必须非 null/空，CodeName 不得重复。</summary>
-        private static bool IsValid(DefinedRole role, out string reason)
+        /// <summary>校验职业：CodeName 必须非空，Intro 必须非 null/空，CodeName 不得重复。</summary>
+        private static bool IsValid(Role role, out string reason)
         {
             reason = null;
             if (role == null) { reason = "role 为 null"; return false; }
@@ -106,8 +106,8 @@ namespace LightInDark.Roles
             return true;
         }
 
-        /// <summary>按 CodeName（内部名）获取角色定义</summary>
-        public static DefinedRole GetByName(string name)
+        /// <summary>按 CodeName（内部名）获取职业定义</summary>
+        public static Role GetByName(string name)
         {
             try
             {
@@ -120,8 +120,8 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>按类型获取角色定义</summary>
-        public static T Get<T>() where T : DefinedRole
+        /// <summary>按类型获取职业定义</summary>
+        public static T Get<T>() where T : Role
         {
             try
             {
@@ -134,8 +134,8 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>按注册序号获取角色定义</summary>
-        public static DefinedRole GetById(int id)
+        /// <summary>按注册序号获取职业定义</summary>
+        public static Role GetById(int id)
         {
             try
             {
@@ -148,7 +148,7 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>角色是否已注册</summary>
+        /// <summary>职业是否已注册</summary>
         public static bool IsRegistered(string name)
         {
             try
@@ -180,13 +180,13 @@ namespace LightInDark.Roles
     }
 
     /// <summary>
-    /// 角色类型检查扩展。使用方式：player.Is&lt;SheriffRuntime&gt;()
-    /// 或 player.HasRole&lt;SheriffRuntime&gt;()
+    /// 职业类型检查扩展。使用方式：player.Is&lt;Caller&gt;()
+    /// 或 player.HasRole&lt;Caller&gt;()
     /// </summary>
     public static class RoleTypeChecker
     {
-        /// <summary>检查玩家是否拥有指定类型的角色</summary>
-        public static bool HasRole<T>(this Game.Player player) where T : RuntimeRole
+        /// <summary>检查玩家是否拥有指定类型的职业</summary>
+        public static bool HasRole<T>(this Game.Player player) where T : Role
         {
             try
             {
@@ -199,8 +199,8 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>获取玩家的指定类型角色实例（如果存在）</summary>
-        public static T GetRole<T>(this Game.Player player) where T : RuntimeRole
+        /// <summary>获取玩家的指定类型职业实例（如果存在）</summary>
+        public static T GetRole<T>(this Game.Player player) where T : Role
         {
             try
             {
@@ -213,28 +213,12 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>检查玩家是否为指定角色定义</summary>
-        public static bool Is<TDef, TRuntime>(this Game.Player player)
-            where TDef : DefinedRole
-            where TRuntime : RuntimeRole
-        {
-            try
-            {
-                return player.Role is TRuntime && player.Role?.Definition is TDef;
-            }
-            catch (Exception ex)
-            {
-                LightLogger.LogError("RoleTypeChecker.Is", ex);
-                return default;
-            }
-        }
-
         /// <summary>检查玩家是否为指定类别</summary>
         public static bool IsCategory(this Game.Player player, RoleCategory category)
         {
             try
             {
-                return player.Role?.Definition?.Category == category;
+                return player.Role?.Category == category;
             }
             catch (Exception ex)
             {
@@ -285,7 +269,7 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>检查玩家是否存活且有角色</summary>
+        /// <summary>检查玩家是否存活且有职业</summary>
         public static bool IsAliveWithRole(this Game.Player player)
         {
             try
