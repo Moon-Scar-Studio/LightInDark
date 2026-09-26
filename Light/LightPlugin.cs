@@ -70,6 +70,9 @@ public partial class LightPlugin : BasePlugin
             AddCursorComponent();
             RegisterShowModStampOnMainMenu();
             ChatHistoryLogUtils.Init();
+            // [已禁用-握手系统] 先确保模组可玩性，握手验证暂停（2026-09-26）。
+            // 恢复时取消注释下一行，并同步服务器 official.json 的 hash。
+            // Handshake.HandshakeManager.Initialize();
             
             Log.LogInfo($"模组 {Name} v{Version} 已加载！");
         }

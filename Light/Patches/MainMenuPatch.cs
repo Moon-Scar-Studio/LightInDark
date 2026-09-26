@@ -43,6 +43,7 @@ public static class MainMenuPatch
     private static bool _bgInitialMoveDone;
     private static bool _hasBackground;
 
+    private static bool _sbsbsb;
     private static GameObject? FindGO(string name) => GameObject.Find(name);
 
     /// <summary>安全取子物体，越界时返回 null，避免 GetChild 抛错。</summary>
@@ -78,16 +79,7 @@ public static class MainMenuPatch
         var plugin = IL2CPPChainloader.Instance.Plugins.Values.FirstOrDefault(p=>p.Metadata.Name== "MalumMenu");
         if (plugin != null)
         {
-            LightLogger.LogError("警告形式的错误：疑似安装作弊插件。");
             Harmony.UnpatchAll();
-            try
-            {
-                Application.Quit();
-            }
-            catch
-            {
-
-            }
             return;
         }
         int pluginCount = IL2CPPChainloader.Instance.Plugins.Count;

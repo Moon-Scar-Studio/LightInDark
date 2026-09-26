@@ -124,5 +124,3 @@ public static class ServerDropDownPatch
 //     [HarmonyPrefix]
 //     public static bool Auth_Prefix() => false;
 // }
-// 已注释（2026-09-25）：该 Patch 会完全短路 AuthManager.CoConnect 认证协程，
-// 导致账号登录/服务器连接失败（"连不上Steam账号"）。如需恢复原版认证连接，保持注释即可。

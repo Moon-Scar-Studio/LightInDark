@@ -12,19 +12,24 @@ namespace LightInDark.RPCs
     // =====================================================================
     // 自定义 RPC 系统
     //
-    // 使用 callId = byte.MaxValue (255)
+    // 使用 callId = 200
+    // 注意：不能使用 byte.MaxValue(255)！
+    //   游戏服务器会把 255 识别为 Reactor 框架的自定义 RPC 通道，
+    //   未完成 Reactor 握手就发送会触发“你在完成 Reactor 握手之前发送了
+    //   Reactor 自定义 RPC”被服务器踢出/拒绝，自定义 RPC 完全收不到。
+    //   官方 RpcCalls 枚举只用到 0~66，所以 67~254 都是安全区。
     // 通过 Harmony patch 在 InnerNetObject.HandleRpc 层面拦截
     // 发送时同时执行本地逻辑
     // =====================================================================
 
     /// <summary>
     /// 自定义 RPC 管理器。
-    /// callId = 255 (byte.MaxValue)。
+    /// callId = 200（避开官方 0~66 与 Reactor 的 255）。
     /// </summary>
     public static class CustomRPC
     {
-        /// <summary>自定义 RPC 的 callId（使用 255）</summary>
-        public const byte RpcCallId = byte.MaxValue;
+        /// <summary>自定义 RPC 的 callId（使用 200，勿改回 255）</summary>
+        public const byte RpcCallId = 200;
 
         private static readonly Dictionary<int, Action<MessageReader>> _handlers = new();
 
@@ -212,6 +217,30 @@ namespace LightInDark.RPCs
             catch (Exception ex)
             {
                 LightLogger.LogError("CustomRpcHandlePatch.Prefix", ex);
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// PlayerControl override 了 HandleRpc（虚方法分派可能不走基类），
+    /// 这里同样拦截，确保自定义 RPC 无论经基类还是子类都能处理。
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
+    public static class PlayerControlRpcPatch
+    {
+        public static bool Prefix(PlayerControl __instance, byte callId, MessageReader reader)
+        {
+            try
+            {
+                if (callId != CustomRPC.RpcCallId) return true;
+
+                CustomRPC.HandleRpc(reader);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("PlayerControlRpcPatch.Prefix", ex);
                 return true;
             }
         }

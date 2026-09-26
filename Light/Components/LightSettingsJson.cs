@@ -36,6 +36,15 @@ public static class LightSettings
         /// 跳过自定义加载动画（true 时静默加载，不播放加载页动画）
         /// </summary>
         public bool SkipLoadAnimation { get; set; } = false;
+        /// <summary>
+        /// 模组验证服务器地址（留空 = 禁用手握校验）。
+        /// 默认启用官方验证服务器。
+        /// </summary>
+        public string VerifyServerUrl { get; set; } = "https://lidverify.moonscar.cn";
+        /// <summary>
+        /// 握手失败处理：0=仅提示 1=踢出该玩家（按房主的配置生效）
+        /// </summary>
+        public int HandshakeMode { get; set; } = 0;
     }
     public static LightSettingsData LoadSettingData()
     {
@@ -58,6 +67,13 @@ public static class LightSettings
                 Save(result);
             }
             if (result.MaxFPS > 150) result.MaxFPS = 150;
+
+            // 迁移：旧配置文件缺少新字段时，自动补默认值并写回（保证 VerifyServerUrl/HandshakeMode 等存在）
+            if (!json.Contains("VerifyServerUrl") || !json.Contains("HandshakeMode") || !json.Contains("SkipLoadAnimation"))
+            {
+                LightLogger.Log("设置文件缺少新字段，自动补齐默认值。");
+                Save(result);
+            }
             return result;
         }
         catch(Exception ex)
