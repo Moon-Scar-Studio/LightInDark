@@ -15,6 +15,9 @@ namespace LightInDark.Events
     /// <summary>所有事件的标记接口。</summary>
     public interface IEvent { }
 
+    /// <summary> 监听接口。实现类会自动实例化并注册  </summary>
+    public interface IEventListener { }
+
     /// <summary>可取消事件接口。监听者设置 IsCanceled 后，调用方检查该属性决定是否继续。</summary>
     public interface ICancelableEvent : IEvent
     {
