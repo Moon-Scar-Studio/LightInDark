@@ -64,7 +64,7 @@
 
 - [Discord](https://discord.gg/E6KjzMEJ3) | [QQ群](https://qm.qq.com/q/pzidBWHIxG)  
 
-  ## 许可证
+## 许可证
 
 本项目源代码采用 **GNU General Public License v3.0** 授权，详见 [LICENSE](./LICENSE)。
 
