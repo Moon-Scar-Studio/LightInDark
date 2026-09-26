@@ -377,3 +377,11 @@ LightAPI/.vs/
 LightAPI/.codely-cli/
 LightAPI/mem-log/
 .codely-cli/
+
+# VerificationServer 生成物（构建输出、发布目录、密钥与 zip 包）
+VerificationServer/bin/
+VerificationServer/obj/
+VerificationServer/publish/
+VerificationServer/publish-linux/
+VerificationServer/*.zip
+VerificationServer/**/data/
