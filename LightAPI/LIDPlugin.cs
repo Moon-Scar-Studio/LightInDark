@@ -33,7 +33,7 @@ public partial class LIDPlugin : BasePlugin
         {
             Harmony.PatchAll();
             LidRpcRegistry.ScanAndPatch(Harmony);
-            EventSystem.ScanAndRegisterAll();
+            EventSystem.RegisterAssembly(typeof(LIDPlugin).Assembly);
             // 场景切换事件：监听 UNITY activeSceneChanged，切换后触发 EventSystem 事件
             UnityEngine.SceneManagement.SceneManager.add_activeSceneChanged((Action<Scene, Scene>)((prev, next) =>
             {

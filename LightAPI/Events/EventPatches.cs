@@ -91,6 +91,43 @@ namespace LightInDark.Events
         }
     }
 
+    /// <summary>击杀冷却重置。</summary>
+    [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.SetKillTimer))]
+    public static class ResetKillCooldownPatch
+    {
+        public static void Prefix(PlayerControl __instance, ref float time)
+        {
+            try
+            {
+                if (__instance != PlayerControl.LocalPlayer) return;
+
+                var ev = EventTriggers.OnResetKillCooldown(__instance);
+                if (!ev.UseDefaultCooldown && ev.FixedCooldown.HasValue)
+                    time = ev.FixedCooldown.Value;
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] ResetKillCooldownPatch", ex); }
+        }
+    }
+
+    // =====================================================================
+    //  踢出
+    // =====================================================================
+
+    [HarmonyPatch(typeof(InnerNetClient), nameof(InnerNetClient.KickPlayer))]
+    public static class PlayerKickPatch
+    {
+        public static void Prefix(int clientId, bool ban)
+        {
+            try
+            {
+                var player = AmongUsClient.Instance?.GetClient(clientId)?.Character;
+                if (player == null) return;
+                EventTriggers.OnPlayerKick(player, null, ban ? "banned" : "kicked");
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerKickPatch", ex); }
+        }
+    }
+
     // =====================================================================
     //  小游戏 / 控制台
     // =====================================================================
@@ -167,7 +204,20 @@ namespace LightInDark.Events
         }
     }
 
-    // NormalPlayerTask.OnRemove 不存在于当前 AU 版本，已移除
+    [HarmonyPatch(typeof(PlayerTask), nameof(PlayerTask.OnRemove))]
+    public static class PlayerTaskRemovePatch
+    {
+        public static void Postfix(PlayerTask __instance)
+        {
+            try
+            {
+                var owner = __instance.Owner;
+                if (owner == null) return;
+                EventTriggers.OnPlayerTaskRemove(owner, __instance);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerTaskRemovePatch", ex); }
+        }
+    }
 
     // =====================================================================
     //  会议
@@ -246,19 +296,102 @@ namespace LightInDark.Events
     [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
     public static class MeetingClosePatch
     {
-        public static bool Prefix(MeetingHud __instance)
+        public static bool Prefix()
+        {
+            if (!EventTriggers.OnMeetingTryEnd()) return false;
+            EventTriggers.OnMeetingPreEnd();
+            return true;
+        }
+
+        public static void Postfix(MeetingHud __instance)
         {
             try
             {
-                if (!EventTriggers.OnMeetingTryEnd()) return false;
-                EventTriggers.OnMeetingPreEnd();
                 byte exiledId = byte.MaxValue;
+                bool wasTie = true;
+                if (__instance.exiledPlayer != null)
+                {
+                    exiledId = __instance.exiledPlayer.PlayerId;
+                    wasTie = false;
+                }
+                EventTriggers.OnMeetingEnd(exiledId, wasTie);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MeetingClosePatch.Postfix", ex); }
+        }
+    }
+
+    /// <summary>投票阶段开始。</summary>
+    [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.ServerStart))]
+    public static class MeetingVotingStartPatch
+    {
+        public static void Postfix()
+        {
+            try { EventTriggers.OnMeetingVotingStart(); }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MeetingVotingStartPatch", ex); }
+        }
+    }
+
+    /// <summary>投票结算判定前。</summary>
+    [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CheckForEndVoting))]
+    public static class MeetingTryEndVotingPatch
+    {
+        public static void Postfix(MeetingHud __instance)
+        {
+            try
+            {
+                byte exiledId = byte.MaxValue;
+                bool isTie = __instance.exiledPlayer == null;
                 if (__instance.exiledPlayer != null)
                     exiledId = __instance.exiledPlayer.PlayerId;
-                EventTriggers.OnMeetingEnd(exiledId, false);
-                return true;
+
+                EventTriggers.OnMeetingTryEndVoting(exiledId, isTie);
             }
-            catch (Exception ex) { LightLogger.LogError("[EventPatch] MeetingClosePatch", ex); return true; }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MeetingTryEndVotingPatch", ex); }
+        }
+    }
+
+    /// <summary>投票结果公布。</summary>
+    [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.VotingComplete))]
+    public static class MeetingVoteCompletePatch
+    {
+        public static void Postfix(MeetingHud.VoterState[] states)
+        {
+            try
+            {
+                EventTriggers.OnMeetingVoteEnd(states);
+                EventTriggers.OnMeetingVoteDisclosed(states);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MeetingVoteCompletePatch", ex); }
+        }
+    }
+
+    /// <summary>有玩家投出票。</summary>
+    [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
+    public static class PlayerVotedPatch
+    {
+        public static void Postfix(PlayerId srcPlayerId, PlayerId suspectPlayerId)
+        {
+            try
+            {
+                if (AmongUsClient.Instance?.AmHost != true) return;
+
+                var voted = FindPlayer((byte)suspectPlayerId);
+                if (voted == null) return;
+
+                var voters = new System.Collections.Generic.List<PlayerControl>();
+                var voter = FindPlayer((byte)srcPlayerId);
+                if (voter != null) voters.Add(voter);
+
+                EventTriggers.OnPlayerVoted(voted, voters);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerVotedPatch", ex); }
+        }
+
+        private static PlayerControl FindPlayer(byte playerId)
+        {
+            foreach (var pc in PlayerControl.AllPlayerControls)
+                if (pc != null && pc.PlayerId == playerId) return pc;
+            return null;
         }
     }
 
@@ -269,9 +402,17 @@ namespace LightInDark.Events
     [HarmonyPatch(typeof(ExileController), nameof(ExileController.Begin))]
     public static class ExileBeginEventPatch
     {
-        public static void Prefix()
+        public static void Prefix(ExileController __instance)
         {
-            try { EventTriggers.OnExileScenePreStart(new System.Collections.Generic.List<PlayerControl>()); }
+            try
+            {
+                EventTriggers.OnExileScenePreStart(new System.Collections.Generic.List<PlayerControl>());
+
+                var info = __instance.initData?.networkedPlayer;
+                byte exiledId = byte.MaxValue;
+                if (info != null) exiledId = info.PlayerId;
+                EventTriggers.OnPlayerTryExile(exiledId, __instance.initData?.voteTie ?? false);
+            }
             catch (Exception ex) { LightLogger.LogError("[EventPatch] ExileBeginEventPatch.Prefix", ex); }
         }
 
@@ -311,6 +452,127 @@ namespace LightInDark.Events
     }
 
     // =====================================================================
+    //  地图
+    // =====================================================================
+
+    [HarmonyPatch(typeof(MapBehaviour), nameof(MapBehaviour.ShowNormalMap))]
+    public static class MapOpenNormalPatch
+    {
+        public static void Postfix()
+        {
+            try { EventTriggers.OnMapOpenNormal(); }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MapOpenNormalPatch", ex); }
+        }
+    }
+
+    [HarmonyPatch(typeof(MapBehaviour), nameof(MapBehaviour.ShowSabotageMap))]
+    public static class MapOpenSabotagePatch
+    {
+        public static void Postfix()
+        {
+            try { EventTriggers.OnMapOpenSabotage(); }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MapOpenSabotagePatch", ex); }
+        }
+    }
+
+    [HarmonyPatch(typeof(MapBehaviour), nameof(MapBehaviour.ShowCountOverlay))]
+    public static class MapOpenAdminPatch
+    {
+        public static void Postfix()
+        {
+            try { EventTriggers.OnMapOpenAdmin(); }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MapOpenAdminPatch", ex); }
+        }
+    }
+
+    [HarmonyPatch(typeof(MapBehaviour), nameof(MapBehaviour.Close))]
+    public static class MapClosePatch
+    {
+        public static void Postfix()
+        {
+            try { EventTriggers.OnMapClose(); }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] MapClosePatch", ex); }
+        }
+    }
+
+    // =====================================================================
+    //  破坏系统
+    // =====================================================================
+
+    [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.UpdateSystem),
+        typeof(SystemTypes), typeof(PlayerControl), typeof(byte))]
+    public static class ShipSystemUpdatePatch
+    {
+        // 阿蒙古斯的破坏系统是由服务器端发包控制的，客户端只负责显示。所以这辈子也抓不到破坏者喵。
+        public static void Postfix(SystemTypes systemType, PlayerControl player, byte amount)
+        {
+            try
+            {
+                if (systemType == SystemTypes.Doors)
+                {
+                    if (AmongUsClient.Instance?.AmHost != true || player == null) return;
+                    EventSystem.RunEvent(new PlayerTryOpenDoorHostEvent(player, null));
+                    return;
+                }
+
+                if (!IsCriticalSabotage(systemType)) return;
+                if ((amount & 0x80) != 0)
+                    EventTriggers.OnSabotageEnd(systemType);
+                else
+                    EventTriggers.OnSabotageStart(systemType);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] ShipSystemUpdatePatch", ex); }
+        }
+
+        private static bool IsCriticalSabotage(SystemTypes type)
+            => type == SystemTypes.Reactor
+            || type == SystemTypes.LifeSupp
+            || type == SystemTypes.Comms
+            || type == SystemTypes.Electrical
+            || type == SystemTypes.MushroomMixupSabotage
+            || type == SystemTypes.HeliSabotage;
+    }
+
+    // =====================================================================
+    //  门
+    // =====================================================================
+
+    [HarmonyPatch(typeof(AutoOpenDoor), nameof(AutoOpenDoor.SetDoorway))]
+    public static class DoorwayPatch
+    {
+        public static bool Prefix(AutoOpenDoor __instance, bool open)
+        {
+            try
+            {
+                if (!open) return true;
+                var player = PlayerControl.LocalPlayer;
+                if (player == null) return true;
+
+                var ev = new PlayerTryOpenDoorLocalEvent(player, __instance);
+                EventSystem.RunEvent(ev);
+                return !ev.IsCanceled;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("[EventPatch] DoorwayPatch.Prefix", ex);
+                return true;
+            }
+        }
+
+        public static void Postfix(AutoOpenDoor __instance, bool open)
+        {
+            try
+            {
+                if (!open) return;
+                var player = PlayerControl.LocalPlayer;
+                if (player == null) return;
+                EventTriggers.OnPlayerOpenDoor(player, __instance);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] DoorwayPatch.Postfix", ex); }
+        }
+    }
+
+    // =====================================================================
     //  玩家视觉（每帧）
     // =====================================================================
 
@@ -339,6 +601,26 @@ namespace LightInDark.Events
                 }
             }
             catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerVisualPatch", ex); }
+        }
+    }
+
+    /// <summary>名字装饰。可改显示名与颜色。</summary>
+    [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.RawSetName))]
+    public static class PlayerDecorateNamePatch
+    {
+        public static void Prefix(PlayerControl __instance, ref string name)
+        {
+            try
+            {
+                if (__instance == null) return;
+
+                var ev = EventTriggers.OnPlayerDecorateName(__instance, name);
+                if (!string.IsNullOrEmpty(ev.Name)) name = ev.Name;
+
+                if (ev.NameColor.HasValue && __instance.cosmetics?.nameText != null)
+                    __instance.cosmetics.nameText.color = ColorHelper.ToUnityColor(ev.NameColor.Value);
+            }
+            catch (Exception ex) { LightLogger.LogError("[EventPatch] PlayerDecorateNamePatch", ex); }
         }
     }
 
