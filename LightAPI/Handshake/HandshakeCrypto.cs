@@ -15,11 +15,11 @@ namespace LightInDark.Handshake
     /// </summary>
     public static class HandshakeCrypto
     {
-        /// <summary>验证服务器公钥（PEM）。已嵌入真实公钥（2026-09-25 生成）。</summary>
+        /// <summary>验证服务器公钥（PEM）。已嵌入真实公钥（2026-09-26 重新生成，旧密钥曾入 git 历史故更换）。</summary>
         public const string PublicKeyPem =
             "-----BEGIN PUBLIC KEY-----\n" +
-            "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEz9PVNNRRieHiMwD5g6mOjjcBHLkb\n" +
-            "AzBtgX7o9w3d1vB6M5qclqsXZ5dMNiUiFRNlEMbFJNVnlj5007wj/mVLFw==\n" +
+            "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESYcReDUo3QHkY7Q05gd5JfNXk9l6\n" +
+            "DdbF3HW5z4lygUYthh7VHde8GFswBGey6JRPaFK5PTHfiZbycMpPXFlWiA==\n" +
             "-----END PUBLIC KEY-----";
 
         /// <summary>版本号，与服务器 official.json 的 version 对应。</summary>
