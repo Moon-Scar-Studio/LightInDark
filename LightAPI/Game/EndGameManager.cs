@@ -20,6 +20,7 @@ namespace LightInDark.Game
         {
             _gameActive = true;
             CurrentReason = GameEndReason.None;
+            CustomWinnerCode = null;
         }
 
         /// <summary>
@@ -50,6 +51,14 @@ namespace LightInDark.Game
         public static void MarkInvalid()
         {
             CurrentReason = GameEndReason.Invalid;
+        }
+
+        public static string CustomWinnerCode { get; private set; }
+
+        public static void MarkCustomWin(string winnerCode)
+        {
+            CustomWinnerCode = winnerCode;
+            CurrentReason = GameEndReason.CustomWin;
         }
 
         private static bool _forceEndRequested;

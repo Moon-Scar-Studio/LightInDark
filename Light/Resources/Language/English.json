@@ -92,5 +92,20 @@
   "role.impostor.shortdes": "Kill crewmates or sabotage",
   "role.impostor.des": "Kill crewmates, sabotage, and use vents.",
   "role.impostor.intro": "Hide in the dark, strike when ready.",
-  "gameEnd.invalid": "Invalid Game, No Winner"
+  "gameEnd.invalid": "Invalid Game, No Winner",
+  "role.Jackal.name": "Jackal",
+  "role.Jackal.shortdes": "Kill everyone and take the win alone",
+  "role.Jackal.des": "You are the Jackal, loyal to no side. You carry a blade, you can slip through vents, and you have no allies. After one kill you may recruit a player as your Sidekick. When yours is the only force left standing, you win alone.",
+  "role.Jackal.intro": "Nobody on this ship is on your side. Not yet.",
+  "role.Jackal.killCooldown": "Kill cooldown",
+  "role.Jackal.canVent": "Can use vents",
+  "role.Jackal.canCreateSidekick": "Can recruit a Sidekick",
+  "role.Jackal.maxSidekicks": "Max Sidekicks",
+  "Jackal.kill": "Kill",
+  "Jackal.recruit": "Recruit",
+  "role.Sidekick.name": "Sidekick",
+  "role.Sidekick.shortdes": "The Jackal's ally, padding his numbers",
+  "role.Sidekick.des": "You are the Jackal's Sidekick. You cannot kill, but the Jackal's blade will never find you. If the Jackal dies you take his place, and from then on you can kill and recruit in turn.",
+  "role.Sidekick.intro": "You follow him, until the day you become him.",
+  "gameEnd.JackalWin": "Jackal Team Wins"
 }

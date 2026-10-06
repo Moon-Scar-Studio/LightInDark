@@ -182,7 +182,8 @@ namespace LightInDark.RPCs
         {
             try
             {
-                if (type == typeof(byte)) writer.Write((byte)value);
+                if (type.IsEnum) writer.Write(Convert.ToInt32(value));
+                else if (type == typeof(byte)) writer.Write((byte)value);
                 else if (type == typeof(int)) writer.Write((int)value);
                 else if (type == typeof(float)) writer.Write((float)value);
                 else if (type == typeof(bool)) writer.Write((bool)value);
@@ -223,6 +224,7 @@ namespace LightInDark.RPCs
         {
             try
             {
+                if (type.IsEnum) return System.Enum.ToObject(type, reader.ReadInt32());
                 if (type == typeof(byte)) return reader.ReadByte();
                 if (type == typeof(int)) return reader.ReadInt32();
                 if (type == typeof(float)) return reader.ReadSingle();

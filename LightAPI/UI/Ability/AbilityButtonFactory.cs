@@ -1,6 +1,7 @@
 using System;
 using LightInDark.Game;
 using LightInDark.Roles;
+using LightInDark.RPCs;
 using UnityEngine;
 
 namespace LightInDark.UI.Ability
@@ -14,6 +15,34 @@ namespace LightInDark.UI.Ability
         /// <summary>创建普通技能按钮（点击一次进冷却）。</summary>
         public static AbilityButton Create(RuntimeRoleTemplate role, RoleButtonConfig config, Action onClick)
             => AbilityButton.Create(role, config, onClick);
+
+        /// <summary>杀手刀按钮：自动锁最近目标（队友与隔墙除外），冷却取 KillCooldown。</summary>
+        public static AbilityButton CreateKill(RuntimeRoleTemplate role, Action<Player> onKill = null,
+            Func<Player, bool> extraFilter = null, KeyCode hotkey = KeyCode.Q)
+        {
+            var owner = role?.MyPlayer;
+            if (owner == null) return null;
+
+            var tracker = new PlayerTracker(owner, RoleUtils.KillDistance(),
+                p => !RoleTeam.IsTeammate(owner, p) && (extraFilter?.Invoke(p) ?? true));
+            RoleButtonManager.RegisterTracker(tracker);
+
+            return AbilityButton.Create(role, new RoleButtonConfig { IsKillButton = true }
+                .SetArrangedAsKillButton(true)
+                .SetLabelType(ButtonLabelType.Impostor)
+                .SetHotkey(hotkey)
+                .SetLabelKey("Button.Kill.label")
+                .SetCooldown(role.Role.KillCooldown)
+                .SetCanUse(() => tracker.CurrentTarget != null),
+                () =>
+                {
+                    var target = tracker.CurrentTarget;
+                    if (target?.Control == null) return;
+
+                    RpcDefinitions.MurderPlayer(owner.Control, target.Control, PlayerState.BeKilled);
+                    onKill?.Invoke(target);
+                });
+        }
 
         /// <summary>创建持续效果按钮（效果期间可再点取消，见 EffectButton 配置）。</summary>
         public static EffectButton CreateEffect(RuntimeRoleTemplate role, RoleButtonConfig config, Action onClick)

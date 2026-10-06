@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using HarmonyLib;
 using InnerNet;
@@ -20,6 +20,7 @@ public static class GameEndPatch
             // 注意：原版 Assembly-CSharp 也有全局 EndGameManager，必须全限定模组类型。
             var modReason = LightInDark.Game.EndGameManager.GetCurrentReason();
             bool invalid = modReason == LightInDark.Game.GameEndReason.Invalid;
+            bool neutralWin = LightInDark.Game.EndGameReasonHelper.IsCustomWin(modReason);
             bool impWin;
             string reasonStr;
             if (modReason != LightInDark.Game.GameEndReason.None)
@@ -33,11 +34,15 @@ public static class GameEndPatch
                 impWin = reason.HasValue && IsImpostorWin(reason.Value);
                 reasonStr = reason?.ToString() ?? "Unknown";
             }
-            bool crewWin = !invalid && !impWin;
-            impWin = !invalid && impWin;
+            bool crewWin = !invalid && !neutralWin && !impWin;
+            impWin = !invalid && !neutralWin && impWin;
 
             LightPlayerDataManager.CrewmatesWin = crewWin;
             LightPlayerDataManager.ImpostorsWin = impWin;
+            LightPlayerDataManager.CustomWin = neutralWin;
+            LightPlayerDataManager.CustomWinnerCode = neutralWin
+                ? LightInDark.Game.EndGameManager.CustomWinnerCode ?? ""
+                : "";
             LightPlayerDataManager.WinReason = reasonStr;
 
             // 房间号
@@ -56,12 +61,27 @@ public static class GameEndPatch
             EventTriggers.OnGameEnd(crewWin, impWin, LightPlayerDataManager.WinReason);
 
             // 触发胜利检查事件
+            var winnerCode = LightPlayerDataManager.CustomWinnerCode;
             foreach (var pc in PlayerControl.AllPlayerControls)
             {
-                EventTriggers.OnPlayerCheckWin(pc, LightPlayerDataManager.WinReason);
-                EventTriggers.OnPlayerCheckExtraWin(pc, LightPlayerDataManager.WinReason);
-                bool isWinner = (crewWin && !pc.Data.Role.IsImpostor) || (impWin && pc.Data.Role.IsImpostor);
-                EventTriggers.OnPlayerBlockWin(pc, isWinner, LightPlayerDataManager.WinReason);
+                bool isImpostor = pc.Data.Role.IsImpostor;
+                var player = LightInDark.Game.GameManager.Instance?.GetPlayer(pc.PlayerId);
+                bool isNeutral = player?.IsNeutral() ?? false;
+
+                bool isWinner = neutralWin
+                    ? IsOnWinningTeam(player, winnerCode)
+                    : (crewWin && !isImpostor && !isNeutral) || (impWin && isImpostor);
+
+                var checkEv = EventTriggers.OnPlayerCheckWin(pc, LightPlayerDataManager.WinReason);
+                if (checkEv != null && checkEv.IsWin) isWinner = true;
+
+                var extraEv = EventTriggers.OnPlayerCheckExtraWin(pc, LightPlayerDataManager.WinReason);
+                if (extraEv != null && extraEv.IsExtraWin) isWinner = true;
+
+                var blockEv = EventTriggers.OnPlayerBlockWin(pc, isWinner, LightPlayerDataManager.WinReason);
+                if (blockEv != null && blockEv.IsBlocked) isWinner = false;
+
+                if (player != null) player.IsWinner = isWinner;
             }
 
             LightLogger.Log($"[GameEnd] 船员胜={crewWin}, 内鬼胜={impWin}, 原因={LightPlayerDataManager.WinReason}");
@@ -100,6 +120,14 @@ public static class GameEndPatch
         {
             LightLogger.LogWarning($"[GameEnd] 保存复盘失败: {ex.Message}");
         }
+    }
+
+    private static bool IsOnWinningTeam(LightInDark.Game.Player player, string winnerCode)
+    {
+        if (player == null || string.IsNullOrEmpty(winnerCode)) return false;
+        var template = player.Role?.Role;
+        if (template == null) return false;
+        return template.TeamCode == winnerCode || template.CodeName == winnerCode;
     }
 
     /// <summary>按原版 GameOverReason 判定内鬼是否获胜。</summary>

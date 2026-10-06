@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using LightInDark.Configuration;
@@ -61,6 +61,22 @@ namespace LightInDark.Roles
 
         /// <summary>存活的独立（中立）玩家。</summary>
         public static IEnumerable<Player> AliveNeutrals() => AlivePlayers().Where(p => p.Role?.RoleCategory == RoleCategory.Neutral);
+
+        public static IEnumerable<Player> AliveEvilNeutrals()
+            => AliveNeutrals().Where(p => p.Role?.Role?.NeutralType == NeutralType.Evil);
+
+        public static IEnumerable<Player> AliveNeutralsOf(string codeName)
+            => AliveNeutrals().Where(p => p.Role?.CodeName == codeName);
+
+        public static bool IsOnField(Player p)
+            => p?.Control != null && p.Control.Data != null
+               && !p.Control.Data.IsDead && !p.Control.Data.Disconnected;
+
+        public static float KillDistance()
+        {
+            try { return global::GameManager.Instance?.LogicOptions?.GetKillDistance() ?? 1f; }
+            catch { return 1f; }
+        }
 
         /// <summary>按 PlayerId 获取玩家。</summary>
         public static Player GetPlayerById(byte playerId)

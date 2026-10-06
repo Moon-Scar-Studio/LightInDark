@@ -38,6 +38,8 @@ namespace LightInDark.Game
         public Vector2 Position => Control?.transform?.position ?? Vector2.zero;
         public RuntimeRoleTemplate Role { get; internal set; }
 
+        public bool IsWinner { get; set; }
+
         public Player MyPlayer => this;
         public bool AmOwner => IsLocal;
 

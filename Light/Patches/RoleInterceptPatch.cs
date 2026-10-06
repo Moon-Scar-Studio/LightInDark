@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using AmongUs.GameOptions;
 using HarmonyLib;
 using Hazel;
@@ -106,31 +106,29 @@ namespace Light.Patches
     public static class RoleSelectPatch
     {
         /// <summary>
-        /// 在原版 SelectRoles 之后执行：以原版实际选出的内鬼为准做自定义职业分配。
-        /// 这样自定义内鬼职业必然落在原版内鬼身上，阵营展示/击杀按钮/队友列表都正确，
-        /// 也避免原版随后把职业的底色职业覆盖掉（旧写法在 Prefix 里分配会被原版覆盖）。
+        /// 原版跑完之后再做模组分配（同 TORV：Postfix + 读原版已经选出的内鬼）。
+        /// RoleType、任务表、开场流程都交给原版，模组只在上面叠加自定义职业。
         /// </summary>
         public static void Postfix()
         {
             try
             {
-                // 初始化玩家数据（所有执行 SelectRoles 的客户端都要初始化）
                 LightInDark.Game.LightPlayerDataManager.Initialize();
                 LightInDark.Game.GameManager.Instance.Initialize();
 
-                if (!AmongUsClient.Instance.AmHost) return;   // 分配只在主机做，经 RPC 同步
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
 
-                LightLogger.Log("[Patch] 原版分配完成，开始自定义职业分配");
                 EventTriggers.OnRoleSelectionBegin(PlayerControl.AllPlayerControls?.Count ?? 0);
 
                 var impostors = new List<byte>();
                 var others = new List<byte>();
+
                 foreach (var pc in PlayerControl.AllPlayerControls)
                 {
-                    if (pc?.Data?.Role != null && pc.Data.Role.IsImpostor)
-                        impostors.Add(pc.PlayerId);
-                    else
-                        others.Add(pc.PlayerId);
+                    if (pc?.Data?.Role == null) continue;
+                    if (pc.isDummy) continue;
+                    if (pc.Data.Role.IsImpostor) impostors.Add(pc.PlayerId);
+                    else others.Add(pc.PlayerId);
                 }
 
                 new StandardRoleAllocator().Assign(impostors, others);

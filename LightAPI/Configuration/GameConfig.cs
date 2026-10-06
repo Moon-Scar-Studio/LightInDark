@@ -9,3 +9,9 @@ public enum RoleCategory
     Impostor,
     Neutral,
 }
+
+public enum NeutralType
+{
+    Benign,
+    Evil,
+}

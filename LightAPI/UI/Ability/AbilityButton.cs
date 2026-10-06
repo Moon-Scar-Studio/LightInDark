@@ -72,8 +72,11 @@ namespace LightInDark.UI.Ability
             _passiveButton.OnMouseOut = new UnityEvent();
             _passiveButton.OnClick.AddListener((UnityAction)HandleClick);
 
-            if (HasLimitedUses) _actionButton.SetUsesRemaining(_usesLeft);
-            else _actionButton.SetInfiniteUses();
+            if (_actionButton.usesRemainingSprite != null && _actionButton.usesRemainingText != null)
+            {
+                if (HasLimitedUses) _actionButton.SetUsesRemaining(_usesLeft);
+                else _actionButton.SetInfiniteUses();
+            }
 
             AttachToGrid();
 

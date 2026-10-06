@@ -25,6 +25,10 @@ namespace LightInDark.RPCs
                 if (gamePlayer == null) return;
                 gamePlayer.SetRoleLocal(definedRole, arguments);
                 Game.LightPlayerDataManager.SetRole(playerId, definedRole.Name);
+
+                if (definedRole.RoleCategory == Configuration.RoleCategory.Neutral
+                    && gamePlayer.Control?.Data?.Role != null)
+                    gamePlayer.Control.Data.Role.TasksCountTowardProgress = false;
                 EventTriggers.OnPlayerRoleSet(gamePlayer.Control, gamePlayer.Role);
             }
             catch (Exception ex)

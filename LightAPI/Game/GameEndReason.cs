@@ -33,6 +33,8 @@ namespace LightInDark.Game
 
         Invalid = 8,
 
+        CustomWin = 9,
+
         // ---- 模组扩展结束原因（自定义）----
 
         /// <summary>第三方/自定义原因占位起始值以外，自定义结束时使用高位值。</summary>
@@ -59,6 +61,8 @@ namespace LightInDark.Game
                     return false;
             }
         }
+
+        public static bool IsCustomWin(GameEndReason reason) => reason == GameEndReason.CustomWin;
 
         /// <summary>判断结束原因是否来自模组扩展（自定义）。</summary>
         public static bool IsCustom(GameEndReason reason) => (int)reason >= (int)GameEndReason.CustomFirst;

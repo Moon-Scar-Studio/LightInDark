@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using LightInDark.Configuration;
 using LightInDark.Core;
@@ -88,6 +88,8 @@ namespace LightInDark.Roles
 
         /// <summary>子类覆写：失活时清理。</summary>
         protected virtual void OnInactivated() { }
+        /// <summary>自己的胜利条件：主机每帧轮询，返回 true 即结束并判本职业（或本队）胜。</summary>
+        public virtual bool CheckWin() => false;
 
         /// <summary>释放：注销事件、回收本职业按钮、恢复名字颜色、销毁 Info 文本。</summary>
         public void Release()
