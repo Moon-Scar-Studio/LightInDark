@@ -33,7 +33,8 @@ namespace LightInDark.UI.Ability
                 .SetHotkey(hotkey)
                 .SetLabelKey("Button.Kill.label")
                 .SetCooldown(role.Role.KillCooldown)
-                .SetCanUse(() => tracker.CurrentTarget != null),
+                .SetCanUse(() => tracker.CurrentTarget != null)
+                .SetCanRunCooldownPredicate((t)=>PlayerControl.LocalPlayer.IsKillTimerEnabled),
                 () =>
                 {
                     var target = tracker.CurrentTarget;

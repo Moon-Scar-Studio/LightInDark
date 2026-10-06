@@ -43,7 +43,6 @@ namespace LightInDark.UI.Ability
 
         private GameObject _usesIcon;
         private TextMeshPro _usesIconText;
-
         protected RoleButtonBase(RuntimeRoleTemplate role, Player player, RoleButtonConfig config, Action onClick)
         {
             _role = role;
@@ -55,7 +54,7 @@ namespace LightInDark.UI.Ability
 
         /// <summary>所属职业运行时实例。</summary>
         public RuntimeRoleTemplate Role => _role;
-
+        public Predicate<float> CanRunCooldown => _config.CanRunCooldown;
         /// <summary>绑定的玩家。</summary>
         public Player MyPlayer => _player;
 
@@ -158,7 +157,7 @@ namespace LightInDark.UI.Ability
             if (IsDeadObject) return;
             try
             {
-                if (_inCooldown)
+                if (_inCooldown&&CanRunCooldown(_cooldownTimer))
                 {
                     _cooldownTimer -= Time.deltaTime;
                     if (_cooldownTimer <= 0f)

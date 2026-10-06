@@ -29,7 +29,7 @@ namespace LightInDark.UI.Ability
 
         /// <summary>显示条件（false 时隐藏按钮）。</summary>
         public Func<bool> CanShow = () => true;
-
+        public Predicate<float> CanRunCooldown = (time) => true;
         /// <summary>是否克隆 KillButton 模板（默认克隆 AbilityButton 模板）。</summary>
         public bool IsKillButton = false;
 
@@ -91,6 +91,7 @@ namespace LightInDark.UI.Ability
         public RoleButtonConfig SetOnClickSFX(string path) { OnClickSFX = path; return this; }
         public RoleButtonConfig SetCooldownReadySFX(string path) { CooldownReadySFX = path; return this; }
         public RoleButtonConfig SetLabelType(ButtonLabelType type) { LabelType = type; return this; }
+        public RoleButtonConfig SetCanRunCooldownPredicate(Predicate<float> p) { CanRunCooldown = p; return this; }
         public RoleButtonConfig SetFlashWhile(Func<bool> value) { FlashWhile = value; return this; }
         public RoleButtonConfig SetBrokenIcon(Sprite icon) { BrokenIcon = icon; return this; }
         public RoleButtonConfig SetSubAction(Action value) { SubAction = value; return this; }
