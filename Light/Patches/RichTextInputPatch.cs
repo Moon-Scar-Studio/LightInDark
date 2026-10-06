@@ -85,18 +85,31 @@ public static class RichTextInputPatch
         //   原版对 '\b' 返回 false 才会落到删除分支；我们一旦放行，'\b' 就被当普通字符塞进文本，
         //   渲染成方块并污染 TMP 的字符/光标索引（＝用户报的「删字冒方块、之后输入全乱」）。
         //   （char.IsControl 已覆盖 '\b'，这里不再为它开任何例外。）
-        if (char.IsSurrogate(c)) return true;                // emoji 代理对（半个 = 孤立代理）
-        if (char.IsControl(c)) return true;                  // 控制字符（含退格、换行等）
+        if (char.IsControl(c)) return true;                  // 控制字符（含退格、换行等）—— 唯一有日志实证必须挡的
+
+        // ⚠️ 以下只挡**看不见**的字符：它们画不出来，挡掉不会让用户"打不进字"，
+        //    却能防住"删字留下零宽字符 → 光标/索引错乱"。
         if (c == '\u00AD') return true;                      // 软连字符
         if (c >= '\u200B' && c <= '\u200F') return true;     // 零宽空格 / 方向标记
         if (c >= '\u2028' && c <= '\u202E') return true;     // 行分隔符 / 双向控制
         if (c >= '\u2060' && c <= '\u206F') return true;     // 词连接符 / 不可见运算符 / 双向隔离
-        if (c >= '\u2600' && c <= '\u27BF') return true;     // 杂项 / 装饰符号（字体多无字形）
-        if (c >= '\u2B00' && c <= '\u2BFF') return true;     // 补充箭头
-        if (c >= '\uE000' && c <= '\uF8FF') return true;     // 私有使用区（发送保护的中转字符也在此）
         if (c == '\uFEFF') return true;                      // BOM / 零宽不换行空格
-        if (c >= '\uFE00' && c <= '\uFE0F') return true;     // 变体选择符
-        if (c >= '\uFFF0') return true;                      // 特殊区 / 其它平面
+        if (c >= '\uFE00' && c <= '\uFE0F') return true;     // 变体选择符（单独出现无意义）
+
+        // ⚠️⚠️ 2026-10-06 用户报「聊天框吞字，有一些字打不进去」—— 根因就是这里**原来还挡了可见字符**：
+        //   `\u2600-\u27BF`（★☆♥♪♠…）、`\u2B00-\u2BFF`（⭐⬛…）、`\uE000-\uF8FF`（私有使用区）、
+        //   `\uFFF0` 以上、以及 **所有代理对（emoji）**。
+        //   那些范围是当初"怕出现豆腐块"时**猜**着加的，而日志真正证明的元凶只有 '\b' 一个 ✗
+        //   → 现在**放行**这些可见符号：用户能打进去了 ✓
+        //     （字体缺字形时显示成方块 = **原版行为**，不是本模组引入的问题；
+        //       而且用户已明确要求删掉 emoji 字体回退那套逻辑。）
+        //
+        // ⚠️ 代理对（emoji）**仍然挡着**，这是刻意的：
+        //   · 原版 `TextBoxTMP.IsCharAllowed` 本来也不允许它们 → 不算功能倒退 ✓
+        //   · 放开后"删字只删一半"会留下孤立代理 → 正是用户之前报的「删字冒方块」 ✗
+        //   要放开 emoji 的话，必须同时做"删除时的孤立代理清理"，那需要另开一轮 ✓
+        if (char.IsSurrogate(c)) return true;                // emoji 等非 BMP（见上面说明）
+
         return false;
     }
 
