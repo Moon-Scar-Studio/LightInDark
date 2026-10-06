@@ -166,13 +166,24 @@ namespace LightInDark.UI.Ability
                         {
                             float span = MaxColumns - column - 1;
                             float gap = remaining - 1;
-                            if (span < 0.1f) span = Mathf.Min(gap, MaxColumns) * 0.1f;
-                            int index = 0;
-                            ForRest(i, c =>
+
+                            // ⚠️ remaining == 1 时 gap == 0 → 下面 `span * index / gap` 会算出 **NaN 位置**
+                            //    （按钮直接消失/错位，且不会有任何报错）。
+                            //    Nebula 的 HudGrid 对 `numOfLastLineContents == 1` 有单独的兜底分支：直接放当前列。
+                            if (gap < 0.5f)
                             {
-                                c.CurrentPos = new Vector2(column + span * index / gap, row);
-                                index++;
-                            });
+                                ForRest(i, c => c.CurrentPos = new Vector2(column, row));
+                            }
+                            else
+                            {
+                                if (span < 0.1f) span = Mathf.Min(gap, MaxColumns) * 0.1f;
+                                int index = 0;
+                                ForRest(i, c =>
+                                {
+                                    c.CurrentPos = new Vector2(column + span * index / gap, row);
+                                    index++;
+                                });
+                            }
                         }
                         break;
                     }

@@ -125,8 +125,26 @@ namespace LightInDark.UI.Ability
                 SfxManager.Warmup(_config.CooldownReadySFX);
 
                 CreateUI();
+                KillTextTranslator();     // ★ 必须在子类设完 Label 之前/之后都能生效：先干掉原版翻译器
                 ApplyLabelType();
                 if (_config.Cooldown > 0f) StartCooldown();
+
+                // ★ 诊断：按钮系统以前**只在出错时**打日志 → 出问题时完全没线索（AGENTS §4.8）。
+                //   这里把"建成了没有 / 建在哪 / 冷却与次数"打出来：
+                //   · `_gameObject == null` 说明 CreateUI 悄悄没建出东西 → 按钮永远不出现，这是最难查的一种。
+                string code = _role != null ? _role.CodeName : "?";
+                if (_gameObject == null)
+                {
+                    LightLogger.LogWarning($"[RoleButton] {GetType().Name}({code}) 创建后 **没有 GameObject** —— " +
+                                           "CreateUI 没建出东西，按钮不会出现在 HUD 上");
+                }
+                else
+                {
+                    LightLogger.Log($"[RoleButton] {GetType().Name}({code}) 已创建：" +
+                                    $"pos={_gameObject.transform.localPosition} active={_gameObject.activeSelf} " +
+                                    $"冷却={_config.Cooldown}s 次数={(_config.MaxUses > 0 ? _config.MaxUses.ToString() : "∞")} " +
+                                    $"标签={_config.Label}");
+                }
             }
             catch (Exception ex)
             {
@@ -182,9 +200,88 @@ namespace LightInDark.UI.Ability
             }
         }
 
-        /// <summary>克隆体上的 ActionButton（无则为 null）。</summary>
+        /// <summary>
+        /// 克隆体上的 ActionButton（无则为 null）。
+        ///
+        /// ⚠️ **必须缓存**：这个属性每帧被 `UpdateUsability` / `UpdateCooldownDisplay` 读好几次，
+        ///    原来每次都 `GetComponent<ActionButton>()`（IL2CPP 下是跨托管/原生边界的查找，很贵）。
+        ///    Nebula 的按钮实现也是缓存的（`ModAbilityButtonImpl` / `CustomButton`）。
+        /// ⚠️ 缓存失效时（对象被销毁成假 null，见 AGENTS §4.6.1）这里会用 Unity 的 `!=` 判出来并重新取 ✓
+        /// </summary>
         protected ActionButton Button
-            => _gameObject != null ? _gameObject.GetComponent<ActionButton>() : null;
+        {
+            get
+            {
+                if (_actionButton != null) return _actionButton;
+                _actionButton = _gameObject != null ? _gameObject.GetComponent<ActionButton>() : null;
+                return _actionButton;
+            }
+        }
+
+        private ActionButton? _actionButton;
+
+        /// <summary>上次处理点击的帧号（同一帧只处理一次）。</summary>
+        private int _lastClickFrame = -1;
+
+        /// <summary>
+        /// 让**运行期新建**的渲染器继承克隆体的排序层级（AGENTS §4.3）。
+        ///
+        /// `GameObject.layer` 决定哪台相机渲染、`sortingLayerID/sortingOrder` 决定前后顺序；
+        /// 新 `AddComponent&lt;SpriteRenderer&gt;()` 默认是"Default 层 + order 0"，
+        /// 在别的相机/排序层下就可能被底板或图标盖住（表现：闪白/破损图标"看不见"，但逻辑在跑）。
+        /// </summary>
+        private void InheritSortingFromButton(SpriteRenderer sr, int orderBias)
+        {
+            try
+            {
+                if (sr == null || _gameObject == null) return;
+
+                SpriteRenderer? reference = null;
+                foreach (var r in _gameObject.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    if (r == null || ReferenceEquals(r, sr) || !r.enabled) continue;
+                    reference = r;
+                    break;
+                }
+                if (reference == null) return;
+
+                sr.sortingLayerID = reference.sortingLayerID;
+                sr.sortingOrder = reference.sortingOrder + orderBias;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RoleButton] 继承排序层级失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// **干掉克隆体自带的 `TextTranslatorTMP`**（AGENTS §5.2 同类坑，本工程已经踩过 6 次）。
+        ///
+        /// 它会在第一次 `SetActive(true)` 时跑 `Start()` → `ResetText()`，按 `StringNames` 把文字
+        /// **改回原版串**；之后换语言还会再刷一次。于是我们 `ApplyConfig` 设的 `Label` / `LabelKey`
+        /// 全部失效（表现就是"按钮文字不对 / 一换语言就变回英文"）。
+        /// Nebula 也是显式处理这个组件（`ModAbilityButtonImpl` 里 `enabled = false`、`CustomButton` 里 Destroy）。
+        /// </summary>
+        private void KillTextTranslator()
+        {
+            if (_gameObject == null) return;
+            try
+            {
+                var count = 0;
+                foreach (var t in _gameObject.GetComponentsInChildren<TextTranslatorTMP>(true))
+                {
+                    if (t == null) continue;
+                    t.enabled = false;          // 先禁用：Start() 不会再跑
+                    UnityEngine.Object.Destroy(t);  // 再销毁，双保险
+                    count++;
+                }
+                if (count > 0) LightLogger.Log($"[RoleButton] {GetType().Name} 已清理 {count} 个 TextTranslatorTMP（防止文字被改回原版串）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RoleButton] 清理 TextTranslatorTMP 失败: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// 刷新冷却显示（进度遮罩 + 倒计时数字）。
@@ -234,6 +331,10 @@ namespace LightInDark.UI.Ability
         {
             get
             {
+                // ★ 地图打开时不该显示（原版 HUD 按钮这时都被藏起来）。
+                //   Nebula 的 HudGrid 也是这么做的：`content.ActiveFunc = () => obj.activeSelf && !AmongUsUtil.MapIsOpen`
+                if (MapBehaviour.Instance != null && MapBehaviour.Instance.IsOpen) return false;
+
                 if (_config.AlwaysShow) return _hudActive && _config.CanShow();
                 return _hudActive && _player.IsLocal && !_player.IsDead
                     && MeetingHud.Instance == null && _config.CanShow();
@@ -255,16 +356,43 @@ namespace LightInDark.UI.Ability
         protected void UpdateUsability()
         {
             if (_gameObject == null || !_gameObject.activeSelf) return;
-            var action = _gameObject.GetComponent<ActionButton>();
+            var action = Button;      // ★ 走缓存（原来每帧 GetComponent<ActionButton>()）
             if (action == null) return;
             if (ShouldBeUsable) action.SetEnabled();
             else action.SetDisabled();
+        }
+
+        /// <summary>
+        /// 输入闸门：**小游戏 / 地图打开 / 会议中 / 聊天框聚焦**时都不该响应热键与鼠标点击。
+        ///
+        /// ⚠️ 原来热键只判 `activeSelf`（按钮还"显示着"就触发）→ 开会/看地图/做小游戏时按快捷键
+        ///    照样把技能放出去。Nebula 用的是 `VirtualInput.KeyDownInGame` + `NebulaInput.SomeUiIsActive`。
+        /// </summary>
+        private static bool InputBlocked()
+        {
+            try
+            {
+                if (Minigame.Instance != null) return true;
+                if (MeetingHud.Instance != null) return true;
+                if (MapBehaviour.Instance != null && MapBehaviour.Instance.IsOpen) return true;
+
+                var hud = HudManager.Instance;
+                if (hud != null)
+                {
+                    var chat = hud.Chat;
+                    if (chat != null && chat.freeChatField != null && chat.freeChatField.textArea != null
+                        && chat.freeChatField.textArea.hasFocus) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         protected void UpdateHotkey()
         {
             if (_config.Hotkey == KeyCode.None) return;
             if (_gameObject == null || !_gameObject.activeSelf) return;
+            if (InputBlocked()) return;
             if (Input.GetKeyDown(_config.Hotkey))
                 HandleClick();
         }
@@ -273,6 +401,7 @@ namespace LightInDark.UI.Ability
         {
             if (_config.SubHotkey == KeyCode.None || _config.SubAction == null) return;
             if (_gameObject == null || !_gameObject.activeSelf) return;
+            if (InputBlocked()) return;
             if (Input.GetKeyDown(_config.SubHotkey))
                 HandleSubClick();
         }
@@ -282,8 +411,7 @@ namespace LightInDark.UI.Ability
             if (!_config.UseByMouseClick) return;
             if (_gameObject == null || !_gameObject.activeSelf) return;
             if (!Input.GetMouseButtonDown(0)) return;
-            if (Minigame.Instance != null) return;
-            if (MeetingHud.Instance != null) return;
+            if (InputBlocked()) return;
 
             var camera = Camera.main;
             if (camera == null) return;
@@ -330,9 +458,23 @@ namespace LightInDark.UI.Ability
 
         private static Material ResolveUseButtonMaterial(ImageNames image)
         {
-            var settings = HudManager.Instance?.UseButton?.fastUseSettings;
-            if (settings == null) return null;
-            return settings[image]?.FontMaterial;
+            try
+            {
+                // ⚠️ 别用 `HudManager.Instance?.UseButton?...`（AGENTS §4.6.1）：
+                //   HudManager 是 Unity 对象，场景切换后被销毁成假 null，`?.` 挡不住、访问属性会抛 ✗
+                var hud = HudManager.Instance;
+                if (hud == null) return null;
+                var useButton = hud.UseButton;
+                if (useButton == null) return null;
+
+                var settings = useButton.fastUseSettings;
+                if (settings == null) return null;
+
+                var raw = settings[image];
+                if (raw == null) return null;
+                return raw.FontMaterial;
+            }
+            catch { return null; }
         }
 
         public bool IsBroken => _broken;
@@ -352,6 +494,7 @@ namespace LightInDark.UI.Ability
                     flash.layer = _gameObject.layer;
                     flash.transform.localPosition = new Vector3(0f, 0f, -1f);
                     _flashRenderer = flash.AddComponent<SpriteRenderer>();
+                    InheritSortingFromButton(_flashRenderer, 1);   // ★ 否则可能被图标盖住（闪白看不见）
 
                     var shader = Shader.Find("Sprites/Default");
                     if (shader != null) _flashRenderer.material = new Material(shader);
@@ -417,6 +560,7 @@ namespace LightInDark.UI.Ability
                     broken.layer = _gameObject.layer;
                     broken.transform.localPosition = Vector3.zero;
                     _brokenRenderer = broken.AddComponent<SpriteRenderer>();
+                    InheritSortingFromButton(_brokenRenderer, 1);   // ★ 否则破损图标可能画在底板后面（看不见）
                 }
 
                 _brokenRenderer.sprite = _config.BrokenIcon != null
@@ -436,10 +580,26 @@ namespace LightInDark.UI.Ability
 
                 if (_usesIcon == null)
                 {
-                    var source = HudManager.Instance?.AbilityButton?.transform;
-                    if (source == null || source.childCount <= 2) return;
+                    // ⚠️ 别用 `HudManager.Instance?.AbilityButton?...`（AGENTS §4.6.1，Unity 假 null）
+                    var hud = HudManager.Instance;
+                    var source = hud != null && hud.AbilityButton != null ? hud.AbilityButton.transform : null;
+                    if (source == null || source.childCount <= 2)
+                    {
+                        // ⚠️ 原来是**空 catch + 静默 return**（补丁审查 #18）：次数图标建不出来时毫无痕迹
+                        LightLogger.LogWarning($"[RoleButton] 次数图标跳过：原版 AbilityButton 结构不符（childCount={(source != null ? source.childCount : -1)}）");
+                        return;
+                    }
 
+                    // ⚠️ `GetChild(2)` 是硬编码索引（审查 #18）：原版改结构就默默拿错东西。
+                    //    这里**校验**拿到的模板里确实有 TMP**，没有就报警并放弃（不猜别的索引）。
                     var template = source.GetChild(2);
+                    var templateTmp = template.GetComponentInChildren<TextMeshPro>(true);
+                    if (templateTmp == null)
+                    {
+                        LightLogger.LogWarning("[RoleButton] 次数图标跳过：AbilityButton 第 3 个子物体里没有 TMP（原版结构可能变了）");
+                        return;
+                    }
+
                     _usesIcon = Object.Instantiate(template.gameObject, _gameObject.transform);
                     _usesIcon.name = "UsesIcon";
                     _usesIcon.transform.localScale = template.localScale;
@@ -466,14 +626,25 @@ namespace LightInDark.UI.Ability
             if (_usesIcon != null) _usesIcon.SetActive(false);
         }
 
-        /// <summary>点击入口（子类可覆写；默认：SFX → 回调 → 扣次数 → 冷却）。</summary>
+        /// <summary>点击入口（子类可覆写；默认：可用性重算 → SFX → 回调 → 扣次数 → 冷却）。</summary>
         protected virtual void HandleClick()
         {
             try
             {
-                if (_broken || _inCooldown) return;
-                if (!_config.CanUse()) return;
-                if (HasLimitedUses && _usesLeft <= 0) return;
+                // ⚠️⚠️ **每次点击都重算可用性**。
+                //   原版 `PassiveButton.ReceiveClickDown` **不检查** `ActionButton.CanInteract()`，
+                //   而我们替换了 OnClick —— 于是 `SetDisabled()` 只是改了颜色，
+                //   "灰掉的 / 冷却中的 / 已 Break 的"按钮**照样能点**（用户看到的就是"点了还有效果"）。
+                //   Nebula 的 `DoClick()` 同样每次重算（它注释里写着"发火时机与可见性更新时机会有偏差，所以这里重算"）。
+                if (!ShouldBeUsable) return;
+
+                var action = Button;
+                if (action != null && !action.CanInteract()) return;
+
+                // ⚠️ 同一帧去重：原版 PassiveButton 的 OnClick 与我们自己的 UpdateMouseClick（鼠标半径判定）
+                //    **会在同一帧各触发一次** → 技能连放两次 / 次数扣两次。这里按帧号挡掉第二次。
+                if (_lastClickFrame == Time.frameCount) return;
+                _lastClickFrame = Time.frameCount;
 
                 PlayOnClickSFX();
                 _onClick?.Invoke();
@@ -481,11 +652,7 @@ namespace LightInDark.UI.Ability
                 if (HasLimitedUses)
                 {
                     _usesLeft--;
-                    if (_gameObject != null)
-                    {
-                        var action = _gameObject.GetComponent<ActionButton>();
-                        if (action != null) action.SetUsesRemaining(_usesLeft);
-                    }
+                    if (action != null) action.SetUsesRemaining(_usesLeft);
                 }
                 if (_config.Cooldown > 0f) StartCooldown();
             }

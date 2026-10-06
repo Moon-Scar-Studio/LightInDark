@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using LightInDark.Configuration;
 using LightInDark.Core;
 using LightInDark.Documents;
@@ -23,6 +24,41 @@ namespace LightInDark.Roles
 
         /// <summary>阵营。</summary>
         public virtual RoleCategory RoleCategory => RoleCategory.Crewmate;
+
+        /// <summary>
+        /// 是否为**鬼魂职业**（对齐 Nebula 的 `GhostRole`，2026-10-06）。
+        /// 鬼魂职业**不参与开局分配**，只在玩家死亡时由 `GhostRoleAllocator` 分配（见那里的说明）。
+        /// </summary>
+        public bool IsGhostRole => RoleCategory == RoleCategory.Ghost;
+
+        /// <summary>
+        /// 本职业**允许携带哪些修饰器**（按修饰器 Key 匹配；对齐 Nebula 的 `CanHaveExtraAssignable`）。
+        ///
+        /// ⚠️ 返回 **null 或空集合 = 不限制**（默认值）—— 所以现有职业**一行都不用改**，
+        ///    行为与改动前完全一致（纯增量）。
+        /// 声明了白名单的职业，只有列在里面的修饰器才能加给它（拒绝时会打日志说明原因）。
+        /// </summary>
+        public virtual IReadOnlyCollection<string>? AllowedModifiers => null;
+
+        /// <summary>该职业能否携带某个修饰器（<see cref="AllowedModifiers"/> 为空 = 不限制）。</summary>
+        public bool CanHaveModifier(string modifierKey)
+        {
+            try
+            {
+                var allow = AllowedModifiers;
+                if (allow == null || allow.Count == 0) return true;         // 默认不限制
+                if (string.IsNullOrEmpty(modifierKey)) return false;
+
+                foreach (var k in allow)
+                    if (string.Equals(k, modifierKey, StringComparison.OrdinalIgnoreCase)) return true;
+
+                return false;
+            }
+            catch
+            {
+                return true;   // 白名单本身出错时不要把修饰器系统整体锁死
+            }
+        }
 
         // ---- 职业块(配置界面里的职业按钮)外观 ----
         //  用户 2026-10-06 要求：职业块要有自己的底色，且"高光默认取对应阵营色，
@@ -174,7 +210,18 @@ namespace LightInDark.Roles
         {
             get
             {
-                if (_roleImageTried) return _roleImage;
+                // ⚠️ 2026-10-06 审查 #11：原来只看 `_roleImageTried` —— 一旦试过就永远返回缓存。
+                //   而 `_roleImage` 是 Unity `Sprite`，主菜单卸载/换场景后会变成**假 null**
+                //   （`== null` 为 true 但 C# 引用还在，AGENTS §4.6.1）→ 立绘**再也不显示且永不重试** ✗
+                //   现在先用 `!=` 判活（走 UnityEngine.Object 的 == 重载），活着才用缓存；
+                //   拿到假 null 时**清掉标志重试一次**。
+                if (_roleImage != null) return _roleImage;
+                if (_roleImageTried && !_roleImageWarnedNull)
+                {
+                    _roleImageTried = false;      // 缓存已失效 → 允许重载一次
+                }
+                if (_roleImageTried) return null;
+
                 _roleImageTried = true;      // 只尝试一次，缺图不会每帧重试
 
                 try
@@ -188,9 +235,16 @@ namespace LightInDark.Roles
                     LightInDark.Core.LightLogger.LogDebug($"[RoleTemplate] 立绘加载失败 {CodeName} / {RoleImagePath}: {ex.Message}");
                 }
 
+                if (_roleImage == null)
+                {
+                    _roleImageWarnedNull = true;
+                    LightInDark.Core.LightLogger.LogDebug($"[RoleTemplate] {CodeName} 没有可用立绘（路径={RoleImagePath}），本次不再重试");
+                }
                 return _roleImage;
             }
         }
+
+        private bool _roleImageWarnedNull;
 
         /// <summary>立绘的 pixelsPerUnit —— 和 Nebula 的 <c>AsImage(115f)</c> 保持一致。</summary>
         public const float RoleImagePPU = 115f;
@@ -225,15 +279,45 @@ namespace LightInDark.Roles
 
         // ---- 运行时创建 ----
 
-        /// <summary>创建绑定指定玩家的运行时实例（每个职业必须实现，返回其 Runtime 子类）。</summary>
+        /// <summary>
+        /// **这个职业现在到底出不出** —— 单一判定入口（2026-10-06 审查 #13）。
+        ///
+        /// 原来"能不能出"被拆成 5 处各自实现（`CanBeAssigned` / `Allocation.MaxCount` /
+        /// 配置 `role.X.count` / `GuaranteedCount` / `Chance`），而且"配置优先、回退默认"这段
+        /// 在 `StandardRoleAllocator` 与 `RolePinManager` 里**各写了一遍**（跨程序集，没法共用）→
+        /// 任一处改口径就会不一致（例如配置里显示"已关闭"，预定却照样成功）✗
+        ///
+        /// Nebula 是单一入口 `IsSpawnable()`，并且 `catch { return false; }` ——
+        /// **"配置没建好 = 不出"是安全方向** ✓ 这里取同样的语义。
+        /// </summary>
+        public bool IsSpawnable()
+        {
+            try
+            {
+                if (!CanBeAssigned) return false;
+
+                var item = Configuration.ConfigRegistry.Get($"role.{CodeName}.count");
+                int max = item != null ? item.GetInt() : Allocation.MaxCount;
+                if (max < 0) max = 0;
+                else if (max > 15) max = 15;          // 与分配器同一套夹紧口径
+                return max > 0;
+            }
+            catch { return false; }                   // 读配置失败 → 当作不出（安全方向）
+        }
+
+        /// <summary>运行时创建</summary>
         public abstract RuntimeRoleTemplate CreateRuntime(global::PlayerControl owner);
 
-        /// <summary>框架内部创建入口：调用职业的 CreateRuntime 后激活并登记事件。</summary>
-        internal RuntimeRoleTemplate CreateRuntimeInternal(Game.Player player)
-        {
-            var runtime = CreateRuntime(player.Control);
-            runtime?.Activate();
-            return runtime;
-        }
+        /// <summary>
+        /// 框架内部创建入口：**只创建**运行时实例，**不激活**。
+        ///
+        /// ⚠️⚠️ 2026-10-06（审查 #12）：原来这里顺手 `runtime.Activate()`，
+        ///   而调用方写的是 `Role = newRole.CreateRuntimeInternal(this);` —— **右侧先求值**，
+        ///   于是 `OnActivated()` 执行时 `MyPlayer.Role` 还指着**刚被 Inactivate 的旧职业**（或 null）✗
+        ///   职业在 `OnActivated` 里做 `MyPlayer.HasRole&lt;X&gt;()`、读旧职业状态、"从旧职业继承" 全是过期数据。
+        ///   Nebula 的顺序是**先赋值再初始化**：`data.role = newRole` → `newRole.Initialize(player)` ✓
+        ///   现在改成两步：调用方先 `Role = ...` 再 `runtime.Activate()`。
+        /// </summary>
+        internal RuntimeRoleTemplate CreateRuntimeFor(Game.Player player) => CreateRuntime(player.Control);
     }
 }

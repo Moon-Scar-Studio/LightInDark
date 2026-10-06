@@ -120,6 +120,23 @@ namespace Light.Patches
 
                 if (!AmongUsClient.Instance.AmHost) return;   // 分配只在主机做，经 RPC 同步
 
+                // ⚠️ 只处理**普通模式**（2026-10-06 审查）：`SelectRoles` 在隐藏者模式（HnS）等
+                //   其它模式同样会跑，我们的后置原来**无条件**分配自定义职业 →
+                //   HnS 里会凭空出现内鬼/船员职业（本该没有）。
+                try
+                {
+                    var mode = GameOptionsManager.Instance.CurrentGameOptions.GameMode;
+                    if (mode != GameModes.Normal)
+                    {
+                        LightLogger.Log($"[Patch] 当前模式 {mode} 不是普通模式 → 跳过自定义职业分配");
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[Patch] 取游戏模式失败，按普通模式继续：{ex.Message}");
+                }
+
                 LightLogger.Log("[Patch] 原版分配完成，开始自定义职业分配");
                 EventTriggers.OnRoleSelectionBegin(PlayerControl.AllPlayerControls?.Count ?? 0);
 
@@ -127,10 +144,22 @@ namespace Light.Patches
                 var others = new List<byte>();
                 foreach (var pc in PlayerControl.AllPlayerControls)
                 {
-                    if (pc?.Data?.Role != null && pc.Data.Role.IsImpostor)
+                    if (pc == null) continue;
+
+                    // ⚠️ 与原版取材保持一致：排除**已断线**的玩家（原版 RoleManager 里就滤了 Disconnected），
+                    //    否则断线残留条目会白占职业名额（AGENTS 审查 #14）
+                    try { if (pc.Data != null && pc.Data.Disconnected) continue; } catch { }
+
+                    if (pc.Data?.Role != null && pc.Data.Role.IsImpostor)
                         impostors.Add(pc.PlayerId);
                     else
                         others.Add(pc.PlayerId);
+                }
+
+                if (impostors.Count + others.Count == 0)
+                {
+                    LightLogger.LogWarning("[Patch] 没有任何可分配玩家（名单为空）→ 跳过分配");
+                    return;
                 }
 
                 new StandardRoleAllocator().Assign(impostors, others);
@@ -204,6 +233,18 @@ namespace Light.Patches
             try
             {
                 EventTriggers.OnPlayerDeath(__instance, reason);
+
+                // ★ 鬼魂职业分配（2026-10-06，对齐 Nebula 的 GhostRoleAssignmentPatch）：
+                //   以前死亡 = 职业终止；现在若注册了 RoleCategory.Ghost 的职业，
+                //   房主会给死者分配一个（**没有鬼魂职业时这一步什么都不做** → 行为与改动前一致）
+                try
+                {
+                    if (__instance != null) Roles.Assignment.GhostRoleAllocator.TryAssign(__instance.PlayerId);
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[PlayerDeathPatch] 鬼魂职业分配失败：{ex.Message}");
+                }
                 // 死亡状态已由 RpcDefinitions.Suicide/MurderPlayer 记录到 LightPlayerDataManager
                 // 此处仅在尚未记录时补充（如原版直接触发的死亡）
                 var existing = LightPlayerDataManager.GetData(__instance.PlayerId);
@@ -326,10 +367,36 @@ namespace Light.Patches
             {
                 LightLogger.Log("[Patch] 放逐动画开始");
                 LightPlayerDataManager.CurrentMeetingNumber++;
-                EventTriggers.OnPlayerExile(null);
+
+                // ★ 把"被放逐的人"带进事件（2026-10-06 审查 #9）：
+                //   原来恒发 `OnPlayerExile(null)` → `PlayerExileEvent.Exiled` **永远为空** ✗
+                //   任何想知道"谁被放逐了"的职业都拿不到数据（而 `ExileController.initData.networkedPlayer`
+                //   上就有这个信息）。
+                PlayerControl? exiled = null;
+                try
+                {
+                    var info = __instance != null ? __instance.initData.networkedPlayer : null;
+                    if (info != null)
+                    {
+                        foreach (var pc in PlayerControl.AllPlayerControls)
+                        {
+                            if (pc == null) continue;
+                            if (pc.Data == info) { exiled = pc; break; }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[Patch] 取被放逐玩家失败：{ex.Message}");
+                }
+
+                if (exiled != null) LightLogger.Log($"[Patch] 被放逐：{exiled.name}");
+                EventTriggers.OnPlayerExile(exiled);
             }
-            catch (System.Exception)
+            catch (Exception ex)
             {
+                // ⚠️ 原来是空 catch（AGENTS §11.6：静默是排查的敌人）
+                LightLogger.LogError("[ExileBeginPatch.Postfix]", ex);
             }
         }
     }
@@ -337,6 +404,31 @@ namespace Light.Patches
     // =====================================================================
     // 紧急按钮
     // =====================================================================
+
+    /// <summary>
+    /// **任意来源的复活都发事件**（2026-10-06 审查 #9）。
+    ///
+    /// 原来只在自家 `RpcDefinitions.RevivePlayer` 里发 `OnPlayerRevive` →
+    ///   原版路径 / 其它模组 / 直接调 `PlayerControl.Revive` 都不会触发，
+    ///   职业写在复活钩子里的"恢复状态"逻辑会**静默不跑** ✗
+    /// 现在统一挂在这里（自家 RPC 里那一次已撤掉，避免同一次复活发两遍）。
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Revive))]
+    public static class RevivePatch
+    {
+        public static void Postfix(PlayerControl __instance)
+        {
+            try
+            {
+                if (__instance == null) return;
+                EventTriggers.OnPlayerRevive(__instance);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RevivePatch] 复活事件派发失败：{ex.Message}");
+            }
+        }
+    }
 
     [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.BreakEmergencyButton))]
     public static class EmergencyButtonBrokenPatch

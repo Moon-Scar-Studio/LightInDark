@@ -35,7 +35,7 @@ public class Caller : RoleTemplate
 
     public class RuntimeInstance : RuntimeRoleTemplate
     {
-        public override RoleTemplate Role => MyRole;
+        // Role 由基类提供（ctor 存下 template）—— 审查 #2：不再各处硬写 `=> MyRole`（两个真相）
 
         public RuntimeInstance(PlayerControl owner, RoleTemplate template) : base(owner, template) { }
 

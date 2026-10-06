@@ -19,6 +19,9 @@ namespace LightInDark.UI.Ability
     {
         private static readonly List<RoleButtonBase> _buttons = new();
 
+        /// <summary>上次的 HUD 可见性（只在变化时打日志）。</summary>
+        private static bool _lastVisible = true;
+
         /// <summary>当前注册的按钮数（调试用）。</summary>
         public static int Count => _buttons.Count;
 
@@ -31,9 +34,17 @@ namespace LightInDark.UI.Ability
                 _buttons.Add(button);
 
                 // 会议按钮由 MeetingHud.Start 创建（OnMeetingStart），此处不创建
-                if (button is MeetingTargetButton || button is MeetingAbilityButton) return;
+                if (button is MeetingTargetButton || button is MeetingAbilityButton)
+                {
+                    LightLogger.Log($"[RoleButtonManager] 注册 {button.GetType().Name}（{button.Role?.CodeName ?? "?"}）→ 会议类，等会议开始再建");
+                    return;
+                }
 
-                if (HudManager.Instance != null && HudManager.Instance.AbilityButton != null)
+                bool hudReady = HudManager.Instance != null && HudManager.Instance.AbilityButton != null;
+                LightLogger.Log($"[RoleButtonManager] 注册 {button.GetType().Name}（{button.Role?.CodeName ?? "?"}）→ " +
+                                $"{(hudReady ? "HUD 就绪，立即创建" : "HUD 未就绪，入队等待")}（累计 {_buttons.Count} 个）");
+
+                if (hudReady)
                 {
                     HudGrid.Ensure();
                     button.Create();
@@ -58,6 +69,7 @@ namespace LightInDark.UI.Ability
             try
             {
                 HudGrid.Ensure();
+                LightLogger.Log($"[RoleButtonManager] HUD 就绪，补建 {_pendingHud.Count} 个待建按钮（累计 {_buttons.Count} 个）");
                 foreach (var b in _pendingHud)
                 {
                     if (b.IsDeadObject) continue;
@@ -89,11 +101,17 @@ namespace LightInDark.UI.Ability
             }
         }
 
-        /// <summary>设置所有按钮的全局 HUD 激活状态。</summary>
+        /// <summary>设置所有按钮的全局 HUD 激活状态（只在状态真的变化时打一条日志）。</summary>
         public static void SetAllVisible(bool visible)
         {
             try
             {
+                if (_lastVisible != visible)
+                {
+                    _lastVisible = visible;
+                    LightLogger.Log($"[RoleButtonManager] HUD 可见性 → {(visible ? "显示" : "隐藏")}（{_buttons.Count} 个按钮）");
+                }
+
                 foreach (var b in _buttons)
                     b.SetHudActive(visible);
             }
@@ -218,6 +236,16 @@ namespace LightInDark.UI.Ability
             {
                 if (!__instance.AmOwner) return;
                 RoleButtonManager.UpdateAll();
+
+                // ★ 顺手驱动 GameManager 的每帧清理（2026-10-06 审查 #15）：
+                //   `GameManager.Update()`（摘掉死亡/断线玩家）**原本没有任何调用点** ——
+                //   是一段"看着在跑其实从不执行"的死代码（AGENTS §4.2.0 式静默走空）✗
+                //   挂在这里是因为它已经有"仅本人 + 每帧"的正确节流，代价只有一次列表遍历。
+                try { LightInDark.Game.GameManager.Instance.Update(); } catch { }
+
+                // ★ 补发挂起的系统消息（审查 B12）：开局阶段聊天框没就绪时发的提示会被挂起，
+                //   在这里（每帧、仅本人）等它就绪后补发 —— 否则玩家永远看不到"预定已消耗"这类告知 ✗
+                try { LightInDark.RPCs.RpcDefinitions.TickPendingMessages(); } catch { }
             }
             catch (System.Exception)
             {
@@ -225,6 +253,17 @@ namespace LightInDark.UI.Ability
         }
     }
 
+    /// <summary>
+    /// 会议开始：创建会议按钮。
+    ///
+    /// ⚠️ **必须比"发会议事件"的那个 postfix 先跑**（2026-10-06 复核）：
+    ///   `MeetingHud.Start` 上现在有**两个** postfix —— 本类（建按钮）与
+    ///   `EventPatches.MeetingStartPatch`（发 `OnMeetingDiscussionStart` + 会议开始事件）。
+    ///   两个都没标优先级时**执行顺序由加载顺序决定**（不确定）✗
+    ///   → 一旦事件先发，职业在 `OnMeetingStarted` 里想配置/挂接自己的会议按钮就会看到"按钮还没建" ✗
+    ///   Harmony 的规则是**优先级数值越大越先执行**，所以这里用 High 明确"先建按钮、再发事件"。
+    /// </summary>
+    [HarmonyPriority(Priority.High)]
     [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
     public static class MeetingHudStartPatch
     {
@@ -234,8 +273,10 @@ namespace LightInDark.UI.Ability
             {
                 RoleButtonManager.OnMeetingStart(__instance);
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // ⚠️ 原来是空 catch：会议按钮全部建不出来时一个字都不留（AGENTS §11.6）
+                LightLogger.LogError("[MeetingHudStartPatch] 会议按钮创建失败", ex);
             }
         }
     }

@@ -1072,12 +1072,19 @@ public static class HelpScreen
     {
         try
         {
-            int maxCount = role.Allocation.MaxCount;
-            int chance = role.Allocation.Chance;
+            // ⚠️ 2026-10-06 审查 #17：原来直接读 `role.Allocation.*`（**代码里的默认值**），
+            //   而实际分配读的是 `role.X.count` / `role.X.chance` **配置** →
+            //   房主改过配置后，帮助页写的和真正会出的**不一致**（用户看到的规则说明是错的）✗
+            //   现在统一走分配器那两个入口（它们已经带夹紧）。
+            int maxCount = Light.Roles.Assignment.StandardRoleAllocator.GetMaxCount(role);
+            int chance = Light.Roles.Assignment.StandardRoleAllocator.GetChance(role);
             int guaranteed = role.Allocation.GuaranteedCount;
 
             if (maxCount <= 0)
                 return role.Name + ": " + Language.Translate("help.overview.noAssign", "不参与分配");
+
+            // 帮助页的"必出 N"必须和分配器一致（分配器会把 GuaranteedCount 夹到 [0, MaxCount]）
+            if (guaranteed > maxCount) guaranteed = maxCount;
 
             string text = $"{role.Name} × {maxCount}";
             if (guaranteed > 0)

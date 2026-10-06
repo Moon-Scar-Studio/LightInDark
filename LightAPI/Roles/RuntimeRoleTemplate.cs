@@ -17,14 +17,58 @@ namespace LightInDark.Roles
     /// </summary>
     public abstract class RuntimeRoleTemplate : ILifespan, IGameOperator, IBindPlayer
     {
-        /// <summary>职业模板（每个职业用 MyRole 单例覆写返回）。</summary>
-        public abstract RoleTemplate Role { get; }
+        /// <summary>
+        /// 职业模板（定义侧的 `MyRole` 单例）。
+        ///
+        /// ⚠️ 2026-10-06 审查 #2：原来这里是 `abstract` 属性，由每个子类再写一遍
+        ///   `public override RoleTemplate Role => MyRole;` —— 等于**同一个事实写两遍**：
+        ///   ctor 收到的 `template` 参数被**完全丢弃** ✗
+        ///   危险在于：一旦调用方传进来的模板与子类硬写的 `MyRole` **不是同一个实例**
+        ///   （历史上真的发生过 —— 见 `RoleRegistry` 的单例注册坑），
+        ///   `runtime.Role` 与分配器用的模板就会**静默分裂**，以 template 为键的字典、`ReferenceEquals`
+        ///   判断全部失配 ✓ 现在改成"ctor 存下来、基类只读属性暴露"，**只有一个真相**。
+        ///   （Nebula 也是这个形状：`Assignable`/`Role` 是无状态单例，每玩家状态放 `PlayerData`。）
+        /// </summary>
+        public RoleTemplate Role { get; }
 
         /// <summary>绑定的原版玩家对象。</summary>
         public PlayerControl Owner { get; }
 
-        /// <summary>绑定的玩家包装。</summary>
-        public Player MyPlayer { get; }
+        /// <summary>
+        /// 绑定的玩家包装。**懒加载 + 自愈**。
+        ///
+        /// ⚠️⚠️ 原来是在构造函数里**只解析一次**（`MyPlayer = GameManager.GetPlayer(owner.PlayerId)`）：
+        ///   若那一刻玩家表还没建好（客户端早到的职业 RPC、建表时序差异），`MyPlayer` 会**永久为 null**
+        ///   → `AmOwner` 恒 false、`IsDeadObject` 恒 true，
+        ///     `ClosestPlayer` / `DistanceTo` / `IsInRange` / `AlivePlayers` 全链路**静默走空**，
+        ///     全程不报错（用户看到的就是"这个职业好像没效果"）✗
+        ///   Nebula 从不缓存 PlayerControl —— 它的每条钩子都把 playerId 传进来、需要时现查
+        ///   （`Helpers.playerById(id)` / `GameData.AllPlayers[id]`）。这里取同样的思路：用到才查、查不到就重试一次。
+        /// </summary>
+        public Player MyPlayer
+        {
+            get
+            {
+                if (_myPlayer != null) return _myPlayer;
+                try
+                {
+                    byte id = byte.MaxValue;
+                    if (Owner != null) id = Owner.PlayerId;      // Owner 是 Unity 对象，别用 ?.（§4.6.1）
+                    _myPlayer = LightInDark.Game.GameManager.Instance.GetPlayer(id);
+                }
+                catch { _myPlayer = null; }
+
+                if (_myPlayer == null && !_warnedNoPlayer)
+                {
+                    _warnedNoPlayer = true;
+                    LightLogger.LogWarning($"[RuntimeRole] {CodeName} 拿不到对应 Player（playerId={(Owner != null ? Owner.PlayerId.ToString() : "null")}）—— 该职业的玩家相关逻辑会走空");
+                }
+                return _myPlayer;
+            }
+        }
+
+        private Player? _myPlayer;
+        private bool _warnedNoPlayer;
 
         public bool AmOwner => MyPlayer?.AmOwner ?? false;
         public bool IsDeadObject => MyPlayer?.IsDeadObject ?? true;
@@ -33,8 +77,11 @@ namespace LightInDark.Roles
         protected RuntimeRoleTemplate(PlayerControl owner, RoleTemplate template)
         {
             Owner = owner;
-            try { MyPlayer = LightInDark.Game.GameManager.Instance.GetPlayer(owner.PlayerId); }
-            catch { MyPlayer = null; }
+
+            // ★ 唯一的真相来源（审查 #2）：把调用方给的模板存下来，子类不再各自写 `=> MyRole`
+            Role = template ?? throw new ArgumentNullException(nameof(template), "运行时职业必须绑定模板");
+
+            // MyPlayer 由上面的属性懒加载（这里不再解析一次，避免"一次失败永久为 null"）
         }
 
         // ---- 模板便捷访问 ----
@@ -88,6 +135,53 @@ namespace LightInDark.Roles
 
         /// <summary>子类覆写：失活时清理。</summary>
         protected virtual void OnInactivated() { }
+
+        // =====================================================================
+        //  具名钩子（2026-10-06 审查 #8）
+        //
+        //  绑定规则（`EventSystem.CollectListenerMethods`）：**任意实例方法、单参数、
+        //  参数类型是 IEvent 子类**就会被自动绑定 —— 会沿继承链一路找，所以基类里声明的这些
+        //  `protected virtual` 同样会被绑定 ✓
+        //
+        //  于是职业作者**不需要知道事件类名**（`PlayerDeathEvent` 这类），
+        //  只要 override 下面任意一个就行 —— 原来的写法（自己写一个私有一参方法）依然有效。
+        //  这正对着审查 #8 的问题：原来写成两个参数 / 参数不是 IEvent / 名字拼错，
+        //  都会**静默不绑定**（现在 EventSystem 会给"0 个监听方法"打 warning ✓）。
+        //
+        //  ⚠️ 这些事件是**全局**的（所有玩家都会进来），要判"是不是我自己"请用
+        //     `e.Player == Owner` 或 `MyPlayer`。
+        // =====================================================================
+
+        /// <summary>该局中**任意玩家**死亡时（`e.Player` 是死者、`e.Killer` 可能是空）。</summary>
+        protected virtual void OnDied(Events.PlayerDeathEvent e) { }
+
+        /// <summary>任意玩家复活时（`e.Healer` 可能是空）。</summary>
+        protected virtual void OnRevived(Events.PlayerReviveEvent e) { }
+
+        /// <summary>任意玩家被放逐时（`e.Exiled` 是被放逐者；平票时为空）。</summary>
+        protected virtual void OnExiled(Events.PlayerExileEvent e) { }
+
+        /// <summary>任意玩家断开连接时。</summary>
+        protected virtual void OnDisconnected(Events.PlayerDisconnectEvent e) { }
+
+        /// <summary>会议开始时。</summary>
+        protected virtual void OnMeetingStarted(Events.MeetingStartEvent e) { }
+
+        /// <summary>会议结束时。</summary>
+        protected virtual void OnMeetingEnded(Events.MeetingEndEvent e) { }
+
+        /// <summary>
+        /// **职业数据位变化时**（对齐 Nebula `Role.OnUpdateRoleData(int dataId, int newValue)`）。
+        ///
+        /// 用法：
+        /// <code>
+        ///   static readonly int VotesId = RoleData.RegisterId("MayorVotes");
+        ///   RoleData.Set(MyPlayer.Control.PlayerId, VotesId, 3);   // 写（房主权威，框架同步）
+        ///   protected override void OnRoleData(int dataId, int value) { if (dataId == VotesId) ... }
+        /// </code>
+        /// 这样职业的每玩家状态**不需要自己写 RPC**（见 <see cref="RoleData"/>）。
+        /// </summary>
+        protected internal virtual void OnRoleData(int dataId, int value) { }
 
         /// <summary>释放：注销事件、回收本职业按钮、恢复名字颜色、销毁 Info 文本。</summary>
         public void Release()

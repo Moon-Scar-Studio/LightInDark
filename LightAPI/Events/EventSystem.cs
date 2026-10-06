@@ -74,6 +74,44 @@ namespace LightInDark.Events
                 try { LightLogger.Log($"[EventSystem] Attach {type.Name}: {count} 个监听方法"); }
                 catch { }
             }
+            else
+            {
+                // ⚠️⚠️ **0 个方法绑定 = 这个实例永远不会被任何事件调用**（2026-10-06 审查 #8）。
+                //   绑定规则是隐含约定：「任意方法、单参数、参数类型是 IEvent 子类」。
+                //   写成两个参数 / 参数不是 IEvent / 方法名拼错 / 事件类型不存在 → 全部**静默不绑定**，
+                //   表现就是"职业写了但没生效"，日志里一个字都没有 ✗
+                //   这里把"没绑上"变成**可见的 warning**；Nebula 的钩子则全部具名声明在基类上（50+ 个）。
+                try
+                {
+                    LightLogger.LogWarning($"[EventSystem] Attach {type.Name}：**0 个监听方法** —— " +
+                                           "该实例不会被任何事件调用。检查钩子签名（必须是单参数、参数为 IEvent 子类）");
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// 卸载**所有实例**的监听（静态/程序集扫描注册的处理器不动）。
+        ///
+        /// ⚠️ 为什么需要（2026-10-06 审查 #5）：`Player` 包装与 `RuntimeRoleTemplate` 在构造时都会
+        ///   `RegisterInstance(this)`，但换局时**没有任何地方 Detach** →
+        ///   `_attached`/`_listeners` 里永久强引用所有历史对象，局数一多派发越来越慢，
+        ///   而且它们仍持有已销毁的 `PlayerControl`；第二局会同时跑上一局残留的职业事件。
+        ///   Nebula 没有这个问题：它每局整体重建 `GameData`，钩子按 playerId 现查表派发、不订阅。
+        /// </summary>
+        public static void DetachAllInstances()
+        {
+            List<object> snapshot;
+            lock (_gate) { snapshot = new List<object>(_attached); }
+
+            int n = 0;
+            foreach (var inst in snapshot)
+            {
+                try { Detach(inst); n++; }
+                catch { }
+            }
+
+            if (n > 0) LightLogger.Log($"[EventSystem] 换局回收：已卸载 {n} 个实例的监听（静态处理器保留）");
         }
 
         /// <summary>卸载对象全部监听方法。</summary>

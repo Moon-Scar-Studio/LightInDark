@@ -66,14 +66,63 @@ public static class GameEndPatch
 
             LightLogger.Log($"[GameEnd] 船员胜={crewWin}, 内鬼胜={impWin}, 原因={LightPlayerDataManager.WinReason}");
 
+            // ★ 换局回收（2026-10-06 审查 #5/#6）：
+            //   原来这里只发事件 + 存复盘，**完全不碰职业状态** →
+            //   回大厅后上一局的 RuntimeRoleTemplate 仍然 IsActive=true、
+            //   名字上的职业信息与职业按钮都还在（直到下一局 SetRole 才被顺带清掉），
+            //   而且跨局持有已销毁的场景对象；RoleButtonManager.Clear() 全工程无人调用 = 死代码 ✗
+            //   更彻底的那一半（Player.Release + 事件注销）由 GameManager.Initialize() 幂等化后负责：
+            //   它会 Release 掉已销毁的旧实体 ✓
+            CleanupRolesAtGameEnd();
+
             // Autosave
             if (LightPlayerDataManager.AutoSaveEnabled)
             {
                 SaveReplayToFile();
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            // ⚠️ 原来是空 catch（AGENTS §11.6）：整局结束这条链路坏了会一个字都不留 ✗
+            LightLogger.LogError("[GameEndPatch.Postfix]", ex);
+        }
+    }
+
+    /// <summary>整局结束：把所有人的职业失活（触发 OnInactivated + Release）+ 清空职业按钮。</summary>
+    private static void CleanupRolesAtGameEnd()
+    {
+        try
+        {
+            int players = 0, roles = 0;
+            foreach (var p in LightInDark.Game.GameManager.Instance.AllPlayers)
+            {
+                if (p == null) continue;
+                players++;
+                try
+                {
+                    var role = p.Role;
+                    if (role == null || !role.IsActive) continue;
+                    role.Inactivate();      // → OnInactivated() + Release()（注销事件、回收按钮、还原名字颜色）
+                    roles++;
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[GameEndPatch] 失活职业失败: {ex.Message}");
+                }
+            }
+
+            try { LightInDark.UI.Ability.RoleButtonManager.Clear(); } catch { }
+
+            // ★ 卸载所有**实例**监听（审查 #5）：Player 包装与 RuntimeRoleTemplate 构造时都会
+            //   RegisterInstance(this)，但换局从来不 Detach → _attached/_listeners 里永久累积历史对象，
+            //   派发越来越慢，第二局还会跑上一局残留的职业事件。静态处理器不受影响 ✓
+            try { LightInDark.Events.EventSystem.DetachAllInstances(); } catch { }
+
+            LightLogger.Log($"[GameEndPatch] 换局回收完成：{players} 名玩家、{roles} 个职业已失活，职业按钮已清空");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[GameEndPatch.CleanupRolesAtGameEnd] {ex.Message}");
         }
     }
 

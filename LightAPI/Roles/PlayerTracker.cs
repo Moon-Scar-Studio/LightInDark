@@ -202,12 +202,14 @@ namespace LightInDark.Roles
             }
         }
 
-        /// <summary>仅内鬼目标过滤：标准 + 非内鬼</summary>
+        /// <summary>仅内鬼目标过滤：标准 + **是内鬼**</summary>
         public static Func<Player, bool> ImpostorTarget(Player source)
         {
             try
             {
-                return p => p.Control != source.Control && !p.IsDead && !p.IsImpostor();
+                // ⚠️ 2026-10-06 审查：原来是 `!p.IsImpostor()` —— 与 CrewmateTarget / Killable 完全同形，
+                //    而方法名与注释都写着"仅内鬼目标" → **谓词写反了**（接上技能只会选到船员）。
+                return p => p.Control != source.Control && !p.IsDead && p.IsImpostor();
             }
             catch (Exception ex)
             {

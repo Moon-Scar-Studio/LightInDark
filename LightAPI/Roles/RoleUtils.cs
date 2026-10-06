@@ -101,21 +101,37 @@ namespace LightInDark.Roles
 
         /// <summary>
         /// 查找离 source 最近的满足 predicate 的玩家。
+        ///
+        /// ⚠️ 2026-10-06 审查 #15：`source == null` 时原来 `d = 0f` →
+        ///   于是**第一个**满足条件的存活玩家被当成"最近的"返回（**误导性结果**，不是失败）✗
+        ///   组合上"`MyPlayer` 为 null"的历史问题，表现就是"静默选中一个随机玩家"。
+        ///   现在 `source == null` **明确返回 null 并打一次性 warning**（职业侧应自己判空）。
+        ///   （`RoleUtils.IsInRange` 同理：任一为 null 直接 false；`GetDistance` 返回 float.MaxValue ✓）
         /// </summary>
-        /// <param name="source">参照玩家（可 null，此时返回最近存活玩家）。</param>
+        /// <param name="source">参照玩家（**不可为 null**）。</param>
         /// <param name="predicate">可选过滤（默认排除 source 本人与死亡者）。</param>
         /// <param name="maxDistance">可选最大距离限制。</param>
         public static Player FindClosestPlayer(Player source, Func<Player, bool> predicate = null, float? maxDistance = null)
         {
             try
             {
+                if (source == null)
+                {
+                    if (!_warnedNullSource)
+                    {
+                        _warnedNullSource = true;      // 只打一次，避免每帧刷屏
+                        LightLogger.LogWarning("[RoleUtils] FindClosestPlayer 收到 null source —— 返回 null（以前会返回「最近」= 第一个匹配的玩家，属于误导性结果）");
+                    }
+                    return null;
+                }
+
                 Player best = null;
                 float bestDist = float.MaxValue;
                 foreach (var p in AlivePlayers())
                 {
-                    if (source != null && p.Control == source.Control) continue;
+                    if (p.Control == source.Control) continue;
                     if (predicate != null && !predicate(p)) continue;
-                    float d = source != null ? GetDistance(source, p) : 0f;
+                    float d = GetDistance(source, p);
                     if (maxDistance.HasValue && d > maxDistance.Value) continue;
                     if (d < bestDist) { bestDist = d; best = p; }
                 }
@@ -127,6 +143,8 @@ namespace LightInDark.Roles
                 return null;
             }
         }
+
+        private static bool _warnedNullSource;
 
         /// <summary>随机存活玩家。</summary>
         public static Player RandomAlivePlayer()

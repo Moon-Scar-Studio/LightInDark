@@ -5,6 +5,7 @@ using LightInDark.Roles;
 using LightInDark.RPCs;
 using UnityEngine;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace LightInDark.Game
@@ -35,8 +36,48 @@ namespace LightInDark.Game
         public bool IsDead => Control?.Data?.IsDead ?? true;
         public bool IsLocal => Control == PlayerControl.LocalPlayer;
         public string Name => Control?.Data?.PlayerName ?? "Unknown";
-        public Vector2 Position => Control?.transform?.position ?? Vector2.zero;
+        /// <summary>
+        /// 世界坐标。
+        /// ⚠️ 原来写的是 `Control?.transform?.position ?? Vector2.zero` —— 但 `Control` 是 **Unity 对象**，
+        ///   已销毁（假 null）时 `?.` 挡不住，访问 `.transform` 会抛 `MissingReferenceException` ✗
+        ///   （AGENTS §4.6.1）。改成显式 `== null` 判断（能识别假 null）并兜住异常。
+        /// </summary>
+        public Vector2 Position
+        {
+            get
+            {
+                try
+                {
+                    var c = Control;
+                    if (c == null) return Vector2.zero;
+                    var t = c.transform;
+                    if (t == null) return Vector2.zero;
+                    return t.position;
+                }
+                catch { return Vector2.zero; }
+            }
+        }
         public RuntimeRoleTemplate Role { get; internal set; }
+
+        /// <summary>
+        /// 职业数据位（对齐 Nebula 的 `roleData` 字典）。见 <see cref="Roles.RoleData"/>：
+        /// 职业的可变状态放这里，框架负责同步，不用每个职业自己写 RPC。
+        /// ⚠️ 它是 **每局对象上的字段**（Player 是每局新建的），所以换局自然清空 ✓
+        /// </summary>
+        private readonly Dictionary<int, int> _roleData = new();
+
+        /// <summary>读一个职业数据位（无记录 = 0）。</summary>
+        internal int GetRoleData(int dataId)
+        {
+            try { return _roleData.TryGetValue(dataId, out var v) ? v : 0; }
+            catch { return 0; }
+        }
+
+        /// <summary>写一个职业数据位（同步由 <see cref="Roles.RoleData.Set"/> 负责，别直接调）。</summary>
+        internal void SetRoleData(int dataId, int value)
+        {
+            try { _roleData[dataId] = value; } catch { }
+        }
 
         public Player MyPlayer => this;
         public bool AmOwner => IsLocal;
@@ -101,7 +142,12 @@ namespace LightInDark.Game
                 if (ev.IsCanceled) return;
 
                 Role?.Inactivate();
-                Role = newRole.CreateRuntimeInternal(this);
+
+                // ★ 先赋值、再激活（审查 #12）：否则 OnActivated 里读到的 MyPlayer.Role 还是旧职业
+                var runtime = newRole.CreateRuntimeFor(this);
+                Role = runtime;
+                runtime?.Activate();
+
                 EventTriggers.OnRoleAssigned(Control, newRole, arguments);
                 RpcDefinitions.SetRole(Control.PlayerId, newRole.Id, arguments);
 
@@ -123,7 +169,11 @@ namespace LightInDark.Game
                 if (newRole == null) return;
 
                 Role?.Inactivate();
-                Role = newRole.CreateRuntimeInternal(this);
+
+                // ★ 先赋值、再激活（审查 #12，与 SetRole 同理）
+                var runtime = newRole.CreateRuntimeFor(this);
+                Role = runtime;
+                runtime?.Activate();
 
                 Core.LightLogger.Log($"[Player] {Name} (本地) → {newRole.Name}");
             }

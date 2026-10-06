@@ -107,6 +107,21 @@ namespace LightInDark.UI.Ability
             }
         }
 
+        /// <summary>
+        /// 效果倒计时用的文本（自带"按钮还在"的判断）。
+        /// ⚠️ 不要写 `_actionButton?.buttonLabelText`（AGENTS §4.6.1）：`ActionButton` 是 Unity 对象，
+        ///   被销毁成假 null 时 `?.` 挡不住，访问 `buttonLabelText` 会抛 `MissingReferenceException` ✗
+        /// </summary>
+        private TMPro.TextMeshPro? EffectLabel
+        {
+            get
+            {
+                var ab = _actionButton;
+                if (ab == null) return null;          // == 走 UnityEngine.Object 重载，能识别假 null
+                return ab.buttonLabelText;
+            }
+        }
+
         /// <summary>开启效果。EffectDuration&lt;=0 表示持续到手动取消（StopEffect 或 AllowCancelByReclick 重击）。</summary>
         public void StartEffect()
         {
@@ -115,7 +130,7 @@ namespace LightInDark.UI.Ability
                 _effectTimer = EffectDuration <= 0f ? float.MaxValue : EffectDuration;
                 _inEffect = true;
                 _onEffectStart?.Invoke();
-                if (ShowEffectCountdown && _actionButton?.buttonLabelText != null)
+                if (ShowEffectCountdown && EffectLabel != null)
                     _actionButton.buttonLabelText.color = EffectColor;
             }
             catch (Exception ex)
@@ -133,7 +148,7 @@ namespace LightInDark.UI.Ability
                 _inEffect = false;
                 _effectTimer = 0f;
                 _onEffectEnd?.Invoke();
-                if (ShowEffectCountdown && _actionButton?.buttonLabelText != null)
+                if (ShowEffectCountdown && EffectLabel != null)
                 {
                     _actionButton.buttonLabelText.color = NormalColor;
                     _actionButton.buttonLabelText.text = _config.ResolvedLabel;
@@ -154,7 +169,7 @@ namespace LightInDark.UI.Ability
                 {
                     _effectTimer -= Time.deltaTime;
 
-                    if (EffectDuration > 0f && ShowEffectCountdown && _actionButton?.buttonLabelText != null)
+                    if (EffectDuration > 0f && ShowEffectCountdown && EffectLabel != null)
                         _actionButton.buttonLabelText.text = Mathf.CeilToInt(_effectTimer).ToString();
 
                     if (_effectTimer <= 0f)
@@ -177,6 +192,14 @@ namespace LightInDark.UI.Ability
 
                 UpdateVisibility();
                 UpdateUsability();
+
+                // ⚠️⚠️ §4.4「两边打架」：`base.UpdateUsability()` → `ActionButton.SetEnabled()`
+                //    会写 `buttonLabelText.color`（原版行为）→ **把 StartEffect 里设的绿色冲掉**，
+                //    于是"效果进行中"的绿色提示永远看不到（用户看到的是按钮文字莫名其妙不变色）✗
+                //    这里在可用性刷新之后**补一次颜色**，保证绿色由我们说了算。
+                if (_inEffect && ShowEffectCountdown && EffectLabel != null)
+                    _actionButton.buttonLabelText.color = EffectColor;
+
                 UpdateHotkey();
             }
             catch (Exception ex)

@@ -79,8 +79,13 @@ namespace LightInDark.UI.Ability
             try
             {
                 ClearCreated();
-                if (PlayerControl.LocalPlayer?.Data?.IsDead == true) return;
-                if (meeting?.playerStates == null) return;
+
+                // ⚠️ 不用 `PlayerControl.LocalPlayer?.Data?.IsDead`（AGENTS §4.6.1，Unity 假 null）
+                var local = PlayerControl.LocalPlayer;
+                if (local == null) return;
+                if (local.Data != null && local.Data.IsDead) return;
+
+                if (meeting == null || meeting.playerStates == null) return;
 
                 for (int i = 0; i < meeting.playerStates.Length; i++)
                 {
@@ -109,7 +114,15 @@ namespace LightInDark.UI.Ability
 
         private GameObject CreateButtonForArea(PlayerVoteArea pva)
         {
-            var tplRoot = pva?.Buttons?.transform?.Find("CancelButton");
+            if (pva == null) return null;
+
+            // ⚠️ 别用 `pva?.Buttons?.transform?.Find(...)`（AGENTS §4.6.1）：
+            //    `?.` 编译成纯 C# 引用比较，**绕过 UnityEngine.Object 的 == 重载** →
+            //    会议结束后 pva 已被销毁（假 null）时它照样往里走 → 抛异常或拿到坏对象。
+            Transform? tplRoot = null;
+            if (pva.Buttons != null && pva.Buttons.transform != null)
+                tplRoot = pva.Buttons.transform.Find("CancelButton");
+
             GameObject tpl = tplRoot != null ? tplRoot.gameObject : null;
             if (tpl == null) return null;
 
@@ -124,6 +137,16 @@ namespace LightInDark.UI.Ability
             if (go == null) return;
             var passive = go.GetComponent<PassiveButton>();
             if (passive == null) return;
+
+            // ⚠️ 克隆自原版 **CancelButton**，所以它自带 CancelButton 的悬停/移出逻辑 →
+            //    鼠标划过我们的按钮可能触发"取消投票"（§4.5 同类坑：克隆原版控件必须清掉原版交互）。
+            //    OnClick 在下面整体替换，OnMouseOver/OnMouseOut 这里一并清空。
+            try
+            {
+                passive.OnMouseOver = new UnityEngine.Events.UnityEvent();
+                passive.OnMouseOut = new UnityEngine.Events.UnityEvent();
+            }
+            catch { }
 
             if (_holder.Icon != null)
             {

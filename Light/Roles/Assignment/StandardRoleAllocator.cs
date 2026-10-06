@@ -16,10 +16,36 @@ public class StandardRoleAllocator : IRoleAllocator
 {
     private static readonly System.Random Rng = new();
 
-    // 各类别自定义职业分配数量上限（配置系统删除后的临时硬编码默认值）
-    private const int MaxImpostorRoles = 2;
-    private const int MaxNeutralRoles = 1;
-    private const int MaxCrewmateRoles = 2;
+    /// <summary>
+    /// 各类别自定义职业数量上限（**可配置**，2026-10-06 审查 B7）。
+    ///
+    /// ⚠️ 原来是三个 `const`（注释自称"配置系统删除后的临时硬编码"）→
+    ///   15 人局最多只有 5 个自定义职业，玩家在配置界面里**无法调整** ✗
+    ///   Nebula 对应的是 `options.assignment.crewmate / impostor / neutral` ✓
+    /// ✅ **默认值就是原来的 2 / 1 / 2** → 没人改配置时行为与改动前一致（纯增量）。
+    /// </summary>
+    private static int MaxImpostorRoles => GetCap("lid.assignment.impostorMax", 2);
+
+    /// <inheritdoc cref="MaxImpostorRoles"/>
+    private static int MaxNeutralRoles => GetCap("lid.assignment.neutralMax", 1);
+
+    /// <inheritdoc cref="MaxImpostorRoles"/>
+    private static int MaxCrewmateRoles => GetCap("lid.assignment.crewmateMax", 2);
+
+    /// <summary>读上限配置（缺失/异常回退默认；夹到 `[0,15]`，与职业数量项同一口径）。</summary>
+    private static int GetCap(string key, int fallback)
+    {
+        try
+        {
+            var item = ConfigRegistry.Get(key);
+            if (item == null) return fallback;
+
+            int v = item.GetInt();
+            if (v < 0) return 0;
+            return v > 15 ? 15 : v;
+        }
+        catch { return fallback; }
+    }
 
     public void Assign(List<byte> impostors, List<byte> others)
     {
@@ -48,11 +74,46 @@ public class StandardRoleAllocator : IRoleAllocator
 
             EventTriggers.OnPreFixAssignment(table);
             table.Determine();
+
+            // ★ 诊断：把**分配结果表**打出来。
+            //   "职业分配不对 / 某个职业从没出现过"这类问题，没有这张表就只能猜（AGENTS §4.8）。
+            //   每局一条，不会刷屏。
+            try
+            {
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append($"[StandardRoleAllocator] 分配结果（内鬼 {impostors.Count} / 其他 {others.Count}）：");
+                foreach (var cat in new[] { RoleCategory.Impostor, RoleCategory.Neutral, RoleCategory.Crewmate })
+                {
+                    foreach (var (pid, role) in table.GetPlayers(cat))
+                        sb.Append(' ').Append(NameOf(pid)).Append('=').Append(role.Name).Append('(').Append(role.CodeName).Append(')');
+                }
+                LightLogger.Log(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[StandardRoleAllocator] 结果日志失败：{ex.Message}");
+            }
         }
         catch (Exception ex)
         {
             LightLogger.LogError("[StandardRoleAllocator.Assign]", ex);
         }
+    }
+
+    /// <summary>玩家名（诊断用；取不到就退回 id）。</summary>
+    private static string NameOf(byte playerId)
+    {
+        try
+        {
+            foreach (var pc in PlayerControl.AllPlayerControls)
+            {
+                if (pc == null || pc.PlayerId != playerId) continue;
+                var data = pc.Data;
+                return data != null && !string.IsNullOrEmpty(data.PlayerName) ? data.PlayerName : pc.name;
+            }
+        }
+        catch { }
+        return playerId.ToString();
     }
 
     /// <summary>
@@ -82,41 +143,79 @@ public class StandardRoleAllocator : IRoleAllocator
     }
 
     /// <summary>构建某类别的抽选池（可分配且配置最大数量>0 的职业）</summary>
+    /// <summary>
+    /// 构建某类别的抽选池。
+    /// ★ 用统一的 <see cref="RoleTemplate.IsSpawnable"/> 判定（配置 → 默认 → CanBeAssigned，异常返回 false），
+    ///   不再各处自己拼条件（审查 #13）。
+    /// </summary>
     private List<RoleTemplate> BuildPool(RoleCategory category)
-        => RoleRegistry.AllRoles.Where(r => r.RoleCategory == category && r.CanBeAssigned && GetMaxCount(r) > 0).ToList();
+        => RoleRegistry.AllRoles.Where(r => r.RoleCategory == category && r.IsSpawnable()).ToList();
 
-    /// <summary>抽选：先保证必出职业，再按概率补足，直到达到本类别数量上限（preAssigned 为预定已占用数）</summary>
+    /// <summary>池里的候选职业 + **本局剩余名额**（保底与概率共用同一份额度）。</summary>
+    private sealed class PoolEntry
+    {
+        public RoleTemplate Role = null!;
+        public int Remaining;
+    }
+
+    /// <summary>
+    /// 抽选：① 保底职业（按 `GuaranteedCount` **数值**发，洗牌后发）② 其余逐名额按概率抽，
+    /// 直到达到本类别数量上限（<paramref name="preAssigned"/> = 预定已占用数）。
+    ///
+    /// ⚠️⚠️ 2026-10-06 重写（对照 Nebula `Roles/Assignment/RoleAssignment.cs`）。原来有四个必修问题：
+    ///   ① **`GuaranteedCount` 只被当布尔用** —— 发牌数取的是 `MaxCount`，填 2 和填 1 完全一样，
+    ///      而帮助页却显示"必出 2"✗ → 现在真的按它发（并夹到 `[0, MaxCount]`）；
+    ///   ② **概率抽选是"按池顺序逐个独立掷骰、返回第一个命中者"** → 池首职业垄断名额，
+    ///      后面的职业即使也写 100% 也永远不出（"开了两个职业只出一个"）✗
+    ///      → 现在：≥100% 的进"必出轮"，其余**每个名额先让所有合格职业各掷一次骰，
+    ///        再在被命中者里随机挑一个**（保留"概率"语义，同时没有任何职业能垄断）；
+    ///   ③ **全程不记账** → `MaxCount = 1` 的职业可以被分给多人（一局两个召集者）✗
+    ///      → 现在池元素带 `Remaining`，每次命中扣 1，为 0 出池（Nebula 的 `selected.left--` 同款）；
+    ///   ④ **候选里含已有职业的玩家** → `/up` 预定的职业会被后续类别抽选**覆盖**，
+    ///      而预定早已被 `Consume` → 玩家两头空且无提示 ✗ → 现在只从"还没职业"的玩家里选。
+    /// </summary>
     private void Roll(RoleTable table, List<byte> players, List<RoleTemplate> pool, int globalMax, int preAssigned = 0)
     {
         try
         {
             if (pool.Count == 0 || players.Count == 0 || preAssigned >= globalMax) return;
 
-            var candidates = players.OrderBy(_ => Rng.Next()).ToList();
+            var candidates = players.Where(p => !table.HasRole(p)).OrderBy(_ => Rng.Next()).ToList();
+            if (candidates.Count == 0) return;
+
+            var entries = new List<PoolEntry>();
+            foreach (var role in pool)
+            {
+                int max = GetMaxCount(role);
+                if (max <= 0) continue;
+                entries.Add(new PoolEntry { Role = role, Remaining = max });
+            }
+            if (entries.Count == 0) return;
+
             int assigned = preAssigned;
 
-            // 必出职业优先分配（数量由配置/默认决定）
-            foreach (var role in pool.Where(r => r.Allocation.GuaranteedCount > 0))
+            // ① 必出轮：按 GuaranteedCount 的**数值**发；洗牌避免"扫描顺序靠前的吃光名额"
+            foreach (var e in entries.Where(e => GuaranteedOf(e.Role) > 0).OrderBy(_ => Rng.Next()).ToList())
             {
-                int count = GetMaxCount(role);
-                for (int i = 0; i < count && candidates.Count > 0 && assigned < globalMax; i++)
+                int want = Math.Min(GuaranteedOf(e.Role), e.Remaining);
+                for (int i = 0; i < want && candidates.Count > 0 && assigned < globalMax; i++)
                 {
-                    table.SetRole(candidates[0], role);
+                    table.SetRole(candidates[0], e.Role);
                     candidates.RemoveAt(0);
+                    e.Remaining--;
                     assigned++;
                 }
             }
 
-            // 剩余候选按概率抽选，直到达到该类别的最大数量上限
-            foreach (var player in candidates)
+            // ② 概率轮：每个名额一次抽选
+            while (assigned < globalMax && candidates.Count > 0)
             {
-                if (assigned >= globalMax) break;
-                var role = PickByChance(pool);
-                if (role != null)
-                {
-                    table.SetRole(player, role);
-                    assigned++;
-                }
+                var picked = PickOne(entries);
+                if (picked == null) break;          // 没人命中 / 池空了 → 本类别到此为止
+                table.SetRole(candidates[0], picked.Role);
+                candidates.RemoveAt(0);
+                picked.Remaining--;
+                assigned++;
             }
         }
         catch (Exception ex)
@@ -125,35 +224,70 @@ public class StandardRoleAllocator : IRoleAllocator
         }
     }
 
-    /// <summary>按概率从池中抽选一个职业，未命中返回 null（概率由配置/默认决定）</summary>
-    private RoleTemplate PickByChance(List<RoleTemplate> pool)
+    /// <summary>保底份数（夹到 [0, 该职业上限]；`GuaranteedCount` 比上限大时以上限为准）。</summary>
+    private static int GuaranteedOf(RoleTemplate role)
+    {
+        int g = role.Allocation.GuaranteedCount;
+        if (g < 0) g = 0;
+        int max = GetMaxCount(role);
+        return g > max ? max : g;
+    }
+
+    /// <summary>
+    /// 抽一个职业：先清掉"名额用完 / 概率为 0"的，然后
+    /// **让每个合格职业各掷一次骰（概率语义），再在被命中者里等权随机挑一个**。
+    /// 没有任何职业命中时返回 null（调用方结束本类别抽选）。
+    /// </summary>
+    private PoolEntry? PickOne(List<PoolEntry> entries)
     {
         try
         {
-            foreach (var role in pool)
-                if (Rng.Next(100) < GetChance(role))
-                    return role;
-            return null;
+            entries.RemoveAll(e => e.Remaining <= 0 || GetChance(e.Role) <= 0);
+            if (entries.Count == 0) return null;
+
+            var hit = new List<PoolEntry>();
+            foreach (var e in entries)
+            {
+                int chance = GetChance(e.Role);
+                if (chance >= 100 || Rng.Next(100) < chance) hit.Add(e);
+            }
+            if (hit.Count == 0) return null;
+
+            return hit[Rng.Next(hit.Count)];
         }
         catch (Exception ex)
         {
-            LightLogger.LogError("[StandardRoleAllocator.PickByChance]", ex); return default;
+            LightLogger.LogError("[StandardRoleAllocator.PickOne]", ex);
+            return null;      // 原来是 return default（静默放弃且可能返回 null 角色）
         }
     }
 
-    /// <summary>读取职业最大数量：优先读配置 role.&lt;CodeName&gt;.count，无配置时回退 Allocation 默认。</summary>
+    /// <summary>
+    /// 读取职业最大数量：优先读配置 `role.&lt;CodeName&gt;.count`，无配置时回退 `Allocation` 默认。
+    ///
+    /// ⚠️ **在这里夹紧**（2026-10-06 审查 #14）：`Allocation` 是代码里手写的 struct，
+    ///   注册时不做任何裁剪 —— `MaxCount = 99` 会让整个类别的名额被一个职业吃满。
+    ///   配置项本身范围是 0-15，但代码默认值不受它约束，所以读取侧必须兜住。
+    /// </summary>
     public static int GetMaxCount(RoleTemplate role)
     {
+        int v;
         var item = ConfigRegistry.Get($"role.{role.CodeName}.count");
-        if (item != null) return item.GetInt();
-        return role.Allocation.MaxCount;
+        v = item != null ? item.GetInt() : role.Allocation.MaxCount;
+        if (v < 0) return 0;
+        return v > 15 ? 15 : v;
     }
 
-    /// <summary>读取职业分配概率：优先读配置 role.&lt;CodeName&gt;.chance，无配置时回退 Allocation 默认。</summary>
+    /// <summary>
+    /// 读取职业分配概率：优先读配置 `role.&lt;CodeName&gt;.chance`，无配置时回退 `Allocation` 默认。
+    /// ⚠️ 同样夹到 `[0,100]`：填 150 会"恒中"、填 -1 会"恒不中"，两种都是静默的行为异常。
+    /// </summary>
     public static int GetChance(RoleTemplate role)
     {
+        int v;
         var item = ConfigRegistry.Get($"role.{role.CodeName}.chance");
-        if (item != null) return item.GetInt();
-        return role.Allocation.Chance;
+        v = item != null ? item.GetInt() : role.Allocation.Chance;
+        if (v < 0) return 0;
+        return v > 100 ? 100 : v;
     }
 }

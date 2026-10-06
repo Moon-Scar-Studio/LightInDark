@@ -36,6 +36,18 @@ namespace LightInDark.Modifiers
                     return null;
                 }
 
+                // ★ 职业白名单（2026-10-06，对齐 Nebula 的 `CanHaveExtraAssignable` / `RelatedExtraRoleData`）：
+                //   职业可以声明"我只允许带这些修饰器"（`RoleTemplate.AllowedModifiers`）。
+                //   ⚠️ **没声明（null / 空）= 不限制** → 与改动前行为完全一致（纯增量）。
+                //   加在 `AddModifier` 里是刻意的：它是**唯一入口**，无论谁（随机分配 / RPC / 技能）加修饰器都过这道闸。
+                var roleTemplate = player.Role?.Role;
+                if (roleTemplate != null && !roleTemplate.CanHaveModifier(modifier.Key))
+                {
+                    LightLogger.Log($"[Modifier] 拒绝：{player.Name} 的职业 {roleTemplate.CodeName} 不允许修饰器 " +
+                                    $"{modifier.Name}（{modifier.Key}）—— 见 {roleTemplate.CodeName}.AllowedModifiers");
+                    return null;
+                }
+
                 var runtime = modifier.CreateInstance(player);
                 list.Add(runtime);
                 EventSystem.RunEvent(new ModifierAddedEvent(player.Control, modifier));

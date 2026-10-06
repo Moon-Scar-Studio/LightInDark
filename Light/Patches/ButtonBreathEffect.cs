@@ -103,7 +103,13 @@ public static class ButtonBreathEffect
             if (_states.ContainsKey(go)) return;
 
             if (!_originalScales.ContainsKey(go))
+            {
+                // ⚠️ 这个静态字典**只增不减**（2026-10-06 审查 #20）：按钮 GameObject 被销毁后
+                //    条目仍然留着（键是假 null），跨局/跨场景一直累积。
+                //    这里在新增时顺手清一遍已销毁的键（Unity 假 null 用 `==` 判，AGENTS §4.6.1）。
+                if (_originalScales.Count > 64) PruneDeadEntries();
                 _originalScales[go] = go.transform.localScale;
+            }
 
             var state = new ButtonState
             {
@@ -142,13 +148,39 @@ public static class ButtonBreathEffect
         }
     }
 
+    /// <summary>清掉已销毁对象的缓存条目（`== null` 走 Unity 的假 null 判定，见 AGENTS §4.6.1）。</summary>
+    private static void PruneDeadEntries()
+    {
+        try
+        {
+            var dead = new List<GameObject>();
+            foreach (var k in _originalScales.Keys)
+                if (k == null) dead.Add(k);
+            foreach (var k in dead) _originalScales.Remove(k);
+
+            if (dead.Count > 0)
+                LightLogger.Log($"[ButtonBreathEffect] 清理 {dead.Count} 个已销毁按钮的缩放缓存（剩 {_originalScales.Count}）");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[ButtonBreathEffect.PruneDeadEntries] {ex.Message}");
+        }
+    }
+
+    /// <summary>缓存"创建房间界面"（CreateGameOptions）。⚠️ 别每帧全场景扫描，很贵。</summary>
+    private static CreateGameOptions? _cachedCreateGameScreen;
+
     /// <summary>创建房间界面（CreateGameOptions，主菜单 MainUI 下的 CreateGameScreen）是否正在显示。</summary>
     private static bool IsCreateGameScreenActive()
     {
         try
         {
-            var screen = UnityEngine.Object.FindObjectOfType<CreateGameOptions>();
-            return screen != null && screen.gameObject.activeInHierarchy;
+            // ⚠️ 原来每帧 `FindObjectOfType<CreateGameOptions>()`（遍历整个场景）—— 主菜单里每秒几十次。
+            //    缓存它，只在缓存被销毁（Unity 假 null，见 AGENTS §4.6.1）时才重查一次。
+            if (_cachedCreateGameScreen != null) return _cachedCreateGameScreen.gameObject.activeInHierarchy;
+
+            _cachedCreateGameScreen = UnityEngine.Object.FindObjectOfType<CreateGameOptions>();
+            return _cachedCreateGameScreen != null && _cachedCreateGameScreen.gameObject.activeInHierarchy;
         }
         catch { return false; }
     }

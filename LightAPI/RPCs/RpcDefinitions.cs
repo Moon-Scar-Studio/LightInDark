@@ -3,6 +3,7 @@ using LightInDark.Events;
 using LightInDark.Game;
 using LightInDark.Roles;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace LightInDark.RPCs
@@ -14,22 +15,89 @@ namespace LightInDark.RPCs
     {
         // ============ 角色同步 ============
 
-        [LidRPC]
+        /// <summary>
+        /// **早到的职业 RPC 挂起表**（playerId → (roleId, arguments)）。
+        ///
+        /// ⚠️ 为什么需要：房主在自己的 `RoleManager.SelectRoles` 里就把 N 条 `SetRole` 发出来了，
+        ///    而客户端那一刻**可能还没建 Player 表** → 原来 `gamePlayer == null` 直接 `return`，
+        ///    **静默丢弃且不重试** → 客户端整局没有职业，而房主日志一切正常 ✗
+        ///    （AGENTS §4.2.3 记的"时机不对就晚点做"同款问题）
+        ///    现在改成挂起，等 `GameManager.Initialize()` 建好表后由 <see cref="FlushPendingRoles"/> 重放。
+        /// </summary>
+        private static readonly System.Collections.Generic.Dictionary<byte, (int RoleId, int[] Arguments)> PendingRoles = new();
+
+        /// <summary>
+        /// 房主下发职业。
+        ///
+        /// ⚠️ `OnlyHost = true`（2026-10-06 审查）：不加的话**任何客户端都能广播"我是召集者"** ——
+        ///   接收端原来只按 hash 执行、不校验来源（`LidRPC.cs:122` 的 `OnlyHost` 检查是现成的闸门，白不用）。
+        ///   这不只是"能作弊"，也让排查变得无从下手（日志里看起来是合法 RPC）。
+        /// </summary>
+        [LidRPC(OnlyHost = true)]
         public static void SetRole(byte playerId, int roleId, int[] arguments)
         {
             try
             {
                 var definedRole = RoleRegistry.GetById(roleId);
-                if (definedRole == null) { LightLogger.LogWarning($"[RPC] 未知角色Id: {roleId}"); return; }
+                if (definedRole == null)
+                {
+                    // 原来是 LogWarning + return，太轻了：这等于"这个玩家的职业没了"
+                    LightLogger.LogError($"[RPC] SetRole 收到未知角色 Id={roleId}（playerId={playerId}）");
+                    return;
+                }
+
                 var gamePlayer = Game.GameManager.Instance.GetPlayer(playerId);
-                if (gamePlayer == null) return;
-                gamePlayer.SetRoleLocal(definedRole, arguments);
-                Game.LightPlayerDataManager.SetRole(playerId, definedRole.Name);
-                EventTriggers.OnPlayerRoleSet(gamePlayer.Control, gamePlayer.Role);
+                if (gamePlayer == null)
+                {
+                    PendingRoles[playerId] = (roleId, arguments);
+                    LightLogger.Log($"[RPC] SetRole({playerId},{definedRole.CodeName}) 早到 → 挂起，" +
+                                    $"等 Player 表就绪后重放（当前挂起 {PendingRoles.Count} 条）");
+                    return;
+                }
+
+                ApplyRole(gamePlayer, definedRole, arguments);
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("RpcDefinitions.SetRole", ex);
+            }
+        }
+
+        /// <summary>真正落到玩家身上（SetRole 与重放共用）。</summary>
+        private static void ApplyRole(Game.Player gamePlayer, RoleTemplate definedRole, int[] arguments)
+        {
+            gamePlayer.SetRoleLocal(definedRole, arguments);
+            Game.LightPlayerDataManager.SetRole(gamePlayer.Control.PlayerId, definedRole.Name);
+            EventTriggers.OnPlayerRoleSet(gamePlayer.Control, gamePlayer.Role);
+        }
+
+        /// <summary>
+        /// 重放挂起的职业 RPC —— **由 `GameManager.Initialize()` 在玩家表建好后调用**。
+        /// 没有这一步，早到的职业就永久丢了（客户端表现为"整局没职业"）。
+        /// </summary>
+        public static void FlushPendingRoles()
+        {
+            if (PendingRoles.Count == 0) return;
+            try
+            {
+                var pending = new List<KeyValuePair<byte, (int RoleId, int[] Arguments)>>(PendingRoles);
+                PendingRoles.Clear();
+
+                int ok = 0, lost = 0;
+                foreach (var kv in pending)
+                {
+                    var role = RoleRegistry.GetById(kv.Value.RoleId);
+                    var player = Game.GameManager.Instance.GetPlayer(kv.Key);
+                    if (role == null || player == null) { lost++; continue; }
+                    ApplyRole(player, role, kv.Value.Arguments);
+                    ok++;
+                }
+
+                LightLogger.Log($"[RPC] 重放挂起的职业 RPC：成功 {ok} 条" + (lost > 0 ? $"，{lost} 条找不到玩家/职业（已丢弃）" : ""));
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.FlushPendingRoles", ex);
             }
         }
 
@@ -68,6 +136,23 @@ namespace LightInDark.RPCs
             }
         }
 
+        /// <summary>
+        /// 同步**职业数据位**（对齐 Nebula 的 roleData 同步；房主权威）。
+        /// 职业状态不用再自己写 RPC —— 用 <see cref="RoleData.Set"/>，框架走这条。
+        /// </summary>
+        [LidRPC(OnlyHost = true)]
+        public static void SetRoleData(byte playerId, int dataId, int value)
+        {
+            try
+            {
+                RoleData.Apply(playerId, dataId, value);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.SetRoleData", ex);
+            }
+        }
+
         /// <summary>恢复玩家（取消死亡状态）</summary>
         [LidRPC(OnlyHost = true)]
         public static void RevivePlayer(byte playerId)
@@ -78,7 +163,9 @@ namespace LightInDark.RPCs
                     if (pc.PlayerId == playerId && pc.Data.IsDead)
                     {
                         pc.Revive();
-                        EventTriggers.OnPlayerRevive(pc);
+                        // ⚠️ 这里**不再手动发** OnPlayerRevive（2026-10-06 审查 #9）：
+                        //    复活事件改由 `PlayerControl.Revive` 的补丁统一派发（见 RoleInterceptPatch.RevivePatch）→
+                        //    原版路径 / 其它模组的复活也能触发；这里再发一次就是同一次复活发两遍。
                         LightLogger.Log($"[RPC] {pc.name} 已复活");
                         break;
                     }
@@ -338,23 +425,81 @@ namespace LightInDark.RPCs
             }
         }
 
-        /// <summary>向指定玩家聊天框显示一条系统消息（仅目标玩家本地显示）</summary>
+        /// <summary>
+        /// 向指定玩家聊天框显示一条系统消息（仅目标玩家本地显示）。
+        ///
+        /// ⚠️ 2026-10-06 审查 B12：`SelectRoles` 阶段（`HudManager.Chat` 还没就绪）发出的提示
+        ///   原来**直接 return 丢弃** → 玩家永远看不到，而对应状态（比如"预定已被消耗"）早已生效 ✗
+        ///   现在改成**挂起 + 每帧补发**（AGENTS §4.2.3 的"时机不对就晚点做"）。
+        /// ⚠️ 顺带修掉 `HudManager.Instance?.Chat`：`HudManager` 是 Unity 对象，假 null 时 `?.` 挡不住（§4.6.1）✗
+        /// </summary>
         [LidRPC]
         public static void ShowSystemMessage(byte targetPlayerId, string message)
         {
             try
             {
-                var pc = PlayerControl.LocalPlayer;
-                if (pc == null || pc.PlayerId != targetPlayerId) return;
-                if (HudManager.Instance?.Chat == null) return;
-                string orig = pc.name;
-                pc.SetName("System");
-                HudManager.Instance.Chat.AddChat(pc, message, false);
-                pc.SetName(orig);
+                if (string.IsNullOrEmpty(message)) return;
+
+                switch (TryShowSystemMessage(targetPlayerId, message))
+                {
+                    case ShowResult.Shown:
+                    case ShowResult.NotForMe:      // 不是给我的 → 直接丢（绝不能排队，否则会越堆越多）
+                        return;
+
+                    case ShowResult.NotReady:
+                        if (!_pendingMessages.Contains((targetPlayerId, message)))
+                        {
+                            _pendingMessages.Add((targetPlayerId, message));
+                            LightLogger.Log($"[RPC] 系统消息挂起（聊天框未就绪）：{message}（待发 {_pendingMessages.Count} 条）");
+                        }
+                        return;
+                }
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("RpcDefinitions.ShowSystemMessage", ex);
+            }
+        }
+
+        private enum ShowResult { Shown, NotForMe, NotReady }
+
+        private static readonly List<(byte PlayerId, string Message)> _pendingMessages = new();
+
+        /// <summary>尝试立刻显示：`NotForMe` = 目标不是我；`NotReady` = 聊天框还没就绪（可延后重试）。</summary>
+        private static ShowResult TryShowSystemMessage(byte targetPlayerId, string message)
+        {
+            var pc = PlayerControl.LocalPlayer;
+            if (pc == null || pc.PlayerId != targetPlayerId) return ShowResult.NotForMe;
+
+            var hud = HudManager.Instance;
+            if (hud == null) return ShowResult.NotReady;
+            var chat = hud.Chat;
+            if (chat == null) return ShowResult.NotReady;
+
+            string orig = pc.name;
+            pc.SetName("System");
+            chat.AddChat(pc, message, false);
+            pc.SetName(orig);
+            return ShowResult.Shown;
+        }
+
+        /// <summary>每帧补发挂起的系统消息（由 `PlayerControl.FixedUpdate` 补丁驱动）。</summary>
+        internal static void TickPendingMessages()
+        {
+            if (_pendingMessages.Count == 0) return;
+
+            try
+            {
+                for (int i = _pendingMessages.Count - 1; i >= 0; i--)
+                {
+                    var (pid, msg) = _pendingMessages[i];
+                    if (TryShowSystemMessage(pid, msg) != ShowResult.Shown) continue;   // 还没就绪 → 留到下帧
+                    _pendingMessages.RemoveAt(i);
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.TickPendingMessages", ex);
             }
         }
 

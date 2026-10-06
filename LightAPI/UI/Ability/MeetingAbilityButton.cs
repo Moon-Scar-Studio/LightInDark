@@ -62,10 +62,18 @@ namespace LightInDark.UI.Ability
             {
                 _meetingActive = true;
                 if (meeting == null) return;
-                if (PlayerControl.LocalPlayer?.Data?.IsDead == true) return;
+
+                // ⚠️ 不用 `PlayerControl.LocalPlayer?.Data?.IsDead`（AGENTS §4.6.1）：
+                //   LocalPlayer 是 Unity 对象，假 null 时 `?.` 挡不住、访问 Data 会抛 ✗
+                var local = PlayerControl.LocalPlayer;
+                if (local == null) return;
+                if (local.Data != null && local.Data.IsDead) return;
+
                 if (_gameObject != null) return; // 已创建
 
-                var template = HudManager.Instance?.AbilityButton;
+                // ⚠️ 同理不用 `HudManager.Instance?.AbilityButton`
+                var hud = HudManager.Instance;
+                var template = hud != null ? hud.AbilityButton : null;
                 if (template == null) return;
                 if (template.transform.parent == null) return;
 
@@ -78,7 +86,7 @@ namespace LightInDark.UI.Ability
                 _passiveButton = _gameObject.GetComponent<PassiveButton>();
 
                 // 克隆材质，避免与原版按钮互相覆盖冷却进度
-                if (_actionButton?.graphic != null && _actionButton.graphic.material != null)
+                if (_actionButton != null && _actionButton.graphic != null && _actionButton.graphic.material != null)
                     _actionButton.graphic.material = new Material(_actionButton.graphic.material);
 
                 ApplyMeetingConfig();
@@ -91,8 +99,11 @@ namespace LightInDark.UI.Ability
                     _passiveButton.OnClick.AddListener((UnityAction)HandleClick);
                 }
 
-                if (HasLimitedUses) _actionButton?.SetUsesRemaining(_usesLeft);
-                else _actionButton?.SetInfiniteUses();
+                if (_actionButton != null)
+                {
+                    if (HasLimitedUses) _actionButton.SetUsesRemaining(_usesLeft);
+                    else _actionButton.SetInfiniteUses();
+                }
 
                 _gameObject.SetActive(true);
             }
