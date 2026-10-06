@@ -60,10 +60,10 @@ public class StandardRoleAllocator : IRoleAllocator
 
             // 内鬼 → 中立 → 船员，依次抽选自定义职业（扣除预定已用名额）
             Roll(table, impostors, BuildPool(RoleCategory.Impostor), MaxImpostorRoles, usedImp);
-            Roll(table, others, BuildPool(RoleCategory.Neutral), MaxNeutralRoles, usedNeu);
 
-            var neutralIds = table.GetPlayers(RoleCategory.Neutral).Select(p => p.PlayerId).ToHashSet();
-            var crew = others.Where(p => !neutralIds.Contains(p)).ToList();
+            AssignNeutrals(table, others, usedNeu);
+
+            var crew = others.Where(p => !table.HasRole(p)).ToList();
             Roll(table, crew, BuildPool(RoleCategory.Crewmate), MaxCrewmateRoles, usedCrew);
 
             // 兜底：未分配自定义职业的玩家给普通职业模板（内鬼→普通内鬼，其他→普通船员）
@@ -142,7 +142,45 @@ public class StandardRoleAllocator : IRoleAllocator
         return used;
     }
 
-    /// <summary>构建某类别的抽选池（可分配且配置最大数量>0 的职业）</summary>
+    /// <summary>
+    /// 独立的中立分配：从中立池里按概率挑 1 个中立职业，随机安到一名尚未分配的非内鬼身上。
+    /// 中立不与船员共用抽选流程，被中立选走的人立刻从船员候选里剔除。
+    /// </summary>
+    private void AssignNeutrals(RoleTable table, List<byte> others, int preAssigned)
+    {
+        int slots = MaxNeutralRoles - preAssigned;
+        if (slots <= 0) return;
+
+        var pool = BuildPool(RoleCategory.Neutral);
+        if (pool.Count == 0) return;
+
+        // ⚠️ merge 注意：PR 这里原来调 `PickByChance(pool)`，而那个方法在第 3 轮已经被删掉 ——
+        //   它的语义是"按池顺序返回第一个命中者"：池首职业垄断名额、而且**不记名额**
+        //   （MaxCount=1 的中立职业能被发给多人）。改成与 `Roll` 完全同一套：
+        //   `PoolEntry`（带本局剩余名额）+ `PickOne`（每个候选各掷一次骰再随机取一个）。
+        var entries = new List<PoolEntry>();
+        foreach (var role in pool)
+        {
+            int max = GetMaxCount(role);
+            if (max <= 0) continue;
+            entries.Add(new PoolEntry { Role = role, Remaining = max });
+        }
+        if (entries.Count == 0) return;
+
+        var candidates = others.Where(p => !table.HasRole(p)).OrderBy(_ => Rng.Next()).ToList();
+
+        int assigned = 0;
+        foreach (var pid in candidates)
+        {
+            if (assigned >= slots) break;
+            var picked = PickOne(entries);
+            if (picked == null) continue;      // 这一轮没人命中 → 换下一个候选（与旧循环形状一致）
+            table.SetRole(pid, picked.Role);
+            picked.Remaining--;                // 记名额：为 0 时 PickOne 会把它剔出池
+            assigned++;
+        }
+    }
+
     /// <summary>
     /// 构建某类别的抽选池。
     /// ★ 用统一的 <see cref="RoleTemplate.IsSpawnable"/> 判定（配置 → 默认 → CanBeAssigned，异常返回 false），

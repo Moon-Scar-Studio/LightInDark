@@ -68,6 +68,15 @@ namespace LightInDark.RPCs
         {
             gamePlayer.SetRoleLocal(definedRole, arguments);
             Game.LightPlayerDataManager.SetRole(gamePlayer.Control.PlayerId, definedRole.Name);
+
+            // ★ 中立职业的任务不计入进度（PR 带来的逻辑）。
+            //   ⚠️ 刻意放在这个**共用落地函数**里，而不是只写在 SetRole 里：
+            //      早到的职业 RPC 是走 FlushPendingRoles → ApplyRole 重放的，
+            //      写在上面就会让"重放的那批玩家"漏掉这一步。
+            if (definedRole.RoleCategory == Configuration.RoleCategory.Neutral
+                && gamePlayer.Control?.Data?.Role != null)
+                gamePlayer.Control.Data.Role.TasksCountTowardProgress = false;
+
             EventTriggers.OnPlayerRoleSet(gamePlayer.Control, gamePlayer.Role);
         }
 

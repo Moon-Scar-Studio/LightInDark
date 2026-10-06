@@ -98,20 +98,3 @@ public static class ShowChatPatch
         }
     }
 }
-[HarmonyPatch(typeof(GameManager), nameof(GameManager.StartGame))]
-public static class GameManager_StartGame_Patch
-{
-    public static void Postfix()
-    {
-        try
-        {
-            LightLogger.Log("[游戏] 初始化 GameManager");
-            Game.GameManager.Instance.Initialize();
-            EventTriggers.OnGameStart(PlayerControl.AllPlayerControls.Count);
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("GameManager_StartGame_Patch.Postfix", ex);
-        }
-    }
-}

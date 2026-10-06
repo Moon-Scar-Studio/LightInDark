@@ -79,6 +79,8 @@ namespace LightInDark.Game
             try { _roleData[dataId] = value; } catch { }
         }
 
+        public bool IsWinner { get; set; }
+
         public Player MyPlayer => this;
         public bool AmOwner => IsLocal;
 

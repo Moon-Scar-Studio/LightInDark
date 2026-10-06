@@ -106,19 +106,17 @@ namespace Light.Patches
     public static class RoleSelectPatch
     {
         /// <summary>
-        /// 在原版 SelectRoles 之后执行：以原版实际选出的内鬼为准做自定义职业分配。
-        /// 这样自定义内鬼职业必然落在原版内鬼身上，阵营展示/击杀按钮/队友列表都正确，
-        /// 也避免原版随后把职业的底色职业覆盖掉（旧写法在 Prefix 里分配会被原版覆盖）。
+        /// 原版跑完之后再做模组分配（同 TORV：Postfix + 读原版已经选出的内鬼）。
+        /// RoleType、任务表、开场流程都交给原版，模组只在上面叠加自定义职业。
         /// </summary>
         public static void Postfix()
         {
             try
             {
-                // 初始化玩家数据（所有执行 SelectRoles 的客户端都要初始化）
                 LightInDark.Game.LightPlayerDataManager.Initialize();
                 LightInDark.Game.GameManager.Instance.Initialize();
 
-                if (!AmongUsClient.Instance.AmHost) return;   // 分配只在主机做，经 RPC 同步
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
 
                 // ⚠️ 只处理**普通模式**（2026-10-06 审查）：`SelectRoles` 在隐藏者模式（HnS）等
                 //   其它模式同样会跑，我们的后置原来**无条件**分配自定义职业 →
@@ -142,15 +140,21 @@ namespace Light.Patches
 
                 var impostors = new List<byte>();
                 var others = new List<byte>();
+
                 foreach (var pc in PlayerControl.AllPlayerControls)
                 {
                     if (pc == null) continue;
+                    // §4.6.1：别用 `pc?.Data?.Role` 判 Unity 对象（假 null 挡不住）
+                    if (pc.Data == null || pc.Data.Role == null) continue;
 
-                    // ⚠️ 与原版取材保持一致：排除**已断线**的玩家（原版 RoleManager 里就滤了 Disconnected），
-                    //    否则断线残留条目会白占职业名额（AGENTS 审查 #14）
-                    try { if (pc.Data != null && pc.Data.Disconnected) continue; } catch { }
+                    // PR 带来的过滤：排除假人（否则假人会白占职业名额）
+                    if (pc.isDummy) continue;
 
-                    if (pc.Data?.Role != null && pc.Data.Role.IsImpostor)
+                    // 与原版取材保持一致：排除**已断线**的玩家（原版 RoleManager 里就滤了 Disconnected），
+                    // 否则断线残留条目会白占职业名额（AGENTS 审查 #14）
+                    try { if (pc.Data.Disconnected) continue; } catch { }
+
+                    if (pc.Data.Role.IsImpostor)
                         impostors.Add(pc.PlayerId);
                     else
                         others.Add(pc.PlayerId);

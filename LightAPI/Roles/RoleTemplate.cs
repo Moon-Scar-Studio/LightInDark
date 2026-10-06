@@ -60,6 +60,20 @@ namespace LightInDark.Roles
             }
         }
 
+        public virtual NeutralType NeutralType => NeutralType.Benign;
+
+        /// <summary>队伍：覆写成同一个字符串即视为同队（名字互相可见、不能互相击杀）。</summary>
+        public virtual string TeamCode => null;
+
+        /// <summary>能否钻通风管：覆写 true 即可，不需要改补丁。</summary>
+        public virtual bool CanUseVents => false;
+
+        /// <summary>能否击杀：覆写 true 后在 OnActivated 里调 AbilityButtonFactory.CreateKill(this)。</summary>
+        public virtual bool CanKill => false;
+
+        /// <summary>击杀冷却（秒）。</summary>
+        public virtual float KillCooldown => 20f;
+
         // ---- 职业块(配置界面里的职业按钮)外观 ----
         //  用户 2026-10-06 要求：职业块要有自己的底色，且"高光默认取对应阵营色，
         //  中立则取该职业自己的颜色"。

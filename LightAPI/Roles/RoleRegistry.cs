@@ -111,6 +111,7 @@ namespace LightInDark.Roles
                 _roles[role.CodeName] = role;
                 _rolesByType[role.GetType()] = role;
                 _rolesById[role.Id] = role;
+                SyncMyRoleId(role);
 
                 if (string.IsNullOrEmpty(role.IntroText))
                     LightLogger.LogWarning($"[RoleRegistry] {role.CodeName} 的开场白翻译缺失（role.{role.CodeName}.intro）");
@@ -126,6 +127,22 @@ namespace LightInDark.Roles
                 LightLogger.LogError("RoleRegistry.Register", ex);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 职业类里的 static MyRole 单例不是注册那个实例，Id 会一直是 0，
+        /// 拿它下发 RPC 会变成「注册顺序第一个职业」。注册时把 Id 同步过去。
+        /// </summary>
+        private static void SyncMyRoleId(RoleTemplate role)
+        {
+            try
+            {
+                var field = role.GetType().GetField("MyRole",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (field?.GetValue(null) is RoleTemplate singleton && !ReferenceEquals(singleton, role))
+                    singleton.Id = role.Id;
+            }
+            catch { }
         }
 
         private static IEnumerable<Type> SafeGetTypes(Assembly assembly)
@@ -255,6 +272,12 @@ namespace LightInDark.Roles
 
         /// <summary>检查玩家是否为中立</summary>
         public static bool IsNeutral(this Game.Player player) => player.IsCategory(RoleCategory.Neutral);
+
+        public static bool IsEvilNeutral(this Game.Player player)
+            => player.IsNeutral() && player.Role?.Role?.NeutralType == NeutralType.Evil;
+
+        public static bool IsBenignNeutral(this Game.Player player)
+            => player.IsNeutral() && player.Role?.Role?.NeutralType != NeutralType.Evil;
 
         /// <summary>检查玩家是否存活且有职业</summary>
         public static bool IsAliveWithRole(this Game.Player player) => !player.IsDead && player.HasRole;

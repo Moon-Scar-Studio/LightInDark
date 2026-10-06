@@ -93,5 +93,20 @@
   "role.impostor.shortdes": "击杀船员或完成破坏",
   "role.impostor.des": "击杀船员、破坏设施、钻管道。",
   "role.impostor.intro": "暗中潜伏，伺机而动。",
-  "gameEnd.invalid": "无效游戏，无人胜利"
+  "gameEnd.invalid": "无效游戏，无人胜利",
+  "role.Jackal.name": "豺狼",
+  "role.Jackal.shortdes": "杀光所有人，独占胜利",
+  "role.Jackal.des": "你是立场中立的豺狼。手里有刀，能钻通风管，但身边一个同伴也没有。杀掉一个人之后，你可以拉拢一名玩家成为跟班。当场上只剩下你这股势力时，你独自获胜。",
+  "role.Jackal.intro": "这艘船上没有你的同伴——除非你亲手造一个出来。",
+  "role.Jackal.killCooldown": "击杀冷却",
+  "role.Jackal.canVent": "能否钻通风管",
+  "role.Jackal.canCreateSidekick": "能否拉拢跟班",
+  "role.Jackal.maxSidekicks": "跟班数量上限",
+  "Jackal.kill": "击杀",
+  "Jackal.recruit": "拉拢",
+  "role.Sidekick.name": "跟班",
+  "role.Sidekick.shortdes": "豺狼的同伙，替他压人数",
+  "role.Sidekick.des": "你是豺狼的跟班。你不能杀人，但豺狼的刀永远不会落在你身上。豺狼死后由你接替他的位置，从那一刻起你也能杀人、也能拉拢新的同伴。",
+  "role.Sidekick.intro": "你跟着他走，直到有一天你变成他。",
+  "gameEnd.JackalWin": "豺狼胜利"
 }

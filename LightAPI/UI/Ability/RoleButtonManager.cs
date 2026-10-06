@@ -83,6 +83,14 @@ namespace LightInDark.UI.Ability
             }
         }
 
+        private static readonly List<PlayerTracker> _trackers = new();
+
+        /// <summary>注册一个目标追踪器，随按钮一起每帧更新。</summary>
+        public static void RegisterTracker(PlayerTracker tracker)
+        {
+            if (tracker != null) _trackers.Add(tracker);
+        }
+
         /// <summary>每帧更新所有按钮。</summary>
         public static void UpdateAll()
         {
@@ -94,6 +102,8 @@ namespace LightInDark.UI.Ability
                     if (b.IsDeadObject) { _buttons.RemoveAt(i); continue; }
                     b.Update();
                 }
+
+                foreach (var tracker in _trackers) tracker.Update();
             }
             catch (Exception ex)
             {

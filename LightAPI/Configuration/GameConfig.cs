@@ -21,3 +21,9 @@ public enum RoleCategory
     /// </summary>
     Ghost,
 }
+
+public enum NeutralType
+{
+    Benign,
+    Evil,
+}

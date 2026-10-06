@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using LightInDark.Core;
 
@@ -85,6 +85,8 @@ namespace LightInDark.Game
         public static string RoomCode { get; set; } = "";
         public static bool CrewmatesWin { get; set; }
         public static bool ImpostorsWin { get; set; }
+        public static bool CustomWin { get; set; }
+        public static string CustomWinnerCode { get; set; } = "";
         public static string WinReason { get; set; } = "";
         public static DateTime GameStartTime { get; set; }
         public static bool IsLocalMode { get; set; }
@@ -100,6 +102,8 @@ namespace LightInDark.Game
                 CurrentMeetingNumber = 0;
                 CrewmatesWin = false;
                 ImpostorsWin = false;
+                CustomWin = false;
+                CustomWinnerCode = "";
                 WinReason = "";
                 GameStartTime = DateTime.Now;
 
@@ -135,6 +139,8 @@ namespace LightInDark.Game
                 RoomCode = "";
                 CrewmatesWin = false;
                 ImpostorsWin = false;
+                CustomWin = false;
+                CustomWinnerCode = "";
                 WinReason = "";
             }
             catch (Exception ex)
@@ -267,7 +273,10 @@ namespace LightInDark.Game
 
                 sb.AppendLine($"═══ 暗中辉复盘 ═══");
                 sb.AppendLine($"房间: {roomDisplay}  时间: {GameStartTime:yyyy/MM/dd HH:mm}");
-                var winSide = CrewmatesWin ? "船员胜利" : ImpostorsWin ? "内鬼胜利" : "平局";
+                var winSide = CrewmatesWin ? "船员胜利"
+                    : ImpostorsWin ? "内鬼胜利"
+                    : CustomWin ? $"{CustomWinnerCode}胜利"
+                    : "平局";
                 sb.AppendLine($"结果: {winSide}  原因: {WinReason}");
                 sb.AppendLine($"会议轮数: {CurrentMeetingNumber}");
                 sb.AppendLine();
