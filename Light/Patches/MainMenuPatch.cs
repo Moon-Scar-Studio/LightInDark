@@ -1272,8 +1272,8 @@ public static class MainMenuPatch
             var defs = new (string label, Action action)[]
             {
                 ("检查更新", CheckForUpdate),
-                ("Github", () => Application.OpenURL("https://github.com/AfishMW/LightInDark")),
-                ("模组官网", () => Application.OpenURL("https://github.com/AfishMW/LightInDark")),
+                ("Github", () => Application.OpenURL("https://github.com/Moon-Scar-Studio/LightInDark")),
+                ("模组官网", () => Application.OpenURL("https://lid.moonscar.cn")),
                 (DataManager.Settings.Language.CurrentLanguage==SupportedLangs.SChinese 
                 ||
                 DataManager.Settings.Language.CurrentLanguage==SupportedLangs.TChinese
