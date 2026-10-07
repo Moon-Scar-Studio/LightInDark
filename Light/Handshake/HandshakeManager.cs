@@ -3,7 +3,6 @@ using HarmonyLib;
 using Hazel;
 using LightInDark.Core;
 using LightInDark.Handshake;
-using LightInDark.Modifiers;
 using LightInDark.RPCs;
 using System;
 using System.Collections;
@@ -30,7 +29,7 @@ namespace Light.Handshake;
 ///
 /// 兜底：玩家加入白名单后 N 秒内未收到有效握手 → 按 HandshakeMode 提示或踢出。
 /// 消息使用 AmongUs 原生右下角提示（Notifier.AddDisconnectMessage）。
-/// 服务器地址留空 = 整个握手系统禁用。
+/// 是否启用见 <see cref="HandshakeManager.IsEnabled"/>（设置开关 + 服务器地址）。
 /// </summary>
 public static class HandshakeManager
 {
@@ -46,19 +45,27 @@ public static class HandshakeManager
     // 客户端状态
     private static string _ticket = "";
     private static long _ticketExp;
-    private static int _pendingNonce;          // 房主发来的挑战 nonce
 
     // 房主状态
     private static readonly Dictionary<byte, int> _issuedNonces = new();      // playerId → nonce
     private static readonly Dictionary<byte, float> _joinTimes = new();       // playerId → 加入时间
+    private static readonly HashSet<byte> _pending = new();                   // 等待验证中（不红名、不算未通过）
     private static readonly HashSet<byte> _verified = new();                  // 已通过验证的玩家
     private static readonly HashSet<byte> _unverified = new();                // 未通过验证（红名 + 阻止开始）
     private static readonly Dictionary<byte, string> _names = new();          // playerId → 名字（提示用）
     private static readonly Dictionary<byte, UnityEngine.Color> _origNameColors = new(); // 未验证玩家的原名字色
     private static bool _timeoutLoopRunning;
 
+    /// <summary>握手是否启用：设置开关打开且验证服务器地址非空。</summary>
+    public static bool IsEnabled =>
+        (LightPlugin.LightSettingsData?.EnableHandshake ?? false)
+        && !string.IsNullOrEmpty(LightPlugin.LightSettingsData?.VerifyServerUrl);
+
     /// <summary>是否存在未通过验证的玩家（房主用于判断能否开始游戏）。</summary>
     public static bool HasUnverified() => _unverified.Count > 0;
+
+    /// <summary>是否存在等待验证中的玩家（不计入未通过）。</summary>
+    public static bool HasPending() => _pending.Count > 0;
 
     /// <summary>指定玩家是否未通过验证（用于红名状态）。</summary>
     public static bool IsUnverified(byte playerId) => _unverified.Contains(playerId);
@@ -101,12 +108,13 @@ public static class HandshakeManager
             var local = PlayerControl.LocalPlayer;
             if (local == null) return;
             if (playerId == local.PlayerId) return; // 自己（房主）无需验证
-            if (string.IsNullOrEmpty(LightPlugin.LightSettingsData.VerifyServerUrl)) return; // 握手禁用
+            if (!IsEnabled) return; // 握手未启用
 
             _names[playerId] = string.IsNullOrEmpty(playerName) ? $"P{playerId}" : playerName;
             _joinTimes[playerId] = Time.time;
             _verified.Remove(playerId);
-            _unverified.Add(playerId);
+            _unverified.Remove(playerId);
+            _pending.Add(playerId); // 先记为等待验证，不红名、不算失败
 
             int nonce = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
             _issuedNonces[playerId] = nonce;
@@ -118,7 +126,7 @@ public static class HandshakeManager
                 w.Write(playerId);
                 w.Write(nonce);
             }, reliable: true);
-            LightLogger.Log($"[Handshake] 已向 {_names[playerId]} 广播挑战 nonce={nonce}");
+            LightLogger.LogDebug($"[Handshake] 已向 {_names[playerId]} 广播挑战 nonce={nonce}");
 
             if (!_timeoutLoopRunning)
             {
@@ -132,10 +140,10 @@ public static class HandshakeManager
         }
     }
 
-    /// <summary>超时兜底：加入后 1 秒未握手 → 提示/踢出。同时清理已离开的玩家。</summary>
+    /// <summary>超时兜底：加入后超过配置时限仍未握手 → 提示/踢出。同时清理已离开的玩家。</summary>
     private static IEnumerator CoTimeoutLoop()
     {
-        while (_timeoutLoopRunning)
+        while (_timeoutLoopRunning) // 常驻：保证玩家离开后仍能清理残留状态
         {
             yield return new WaitForSeconds(1f);
             try
@@ -143,18 +151,29 @@ public static class HandshakeManager
                 if (AmongUsClient.Instance?.AmHost != true) continue;
 
                 float now = Time.time;
+                float timeout = Mathf.Clamp(LightPlugin.LightSettingsData?.HandshakeTimeoutSeconds ?? 10f, 1f, 60f);
+
                 foreach (var kv in new List<KeyValuePair<byte, float>>(_joinTimes))
                 {
                     byte pid = kv.Key;
                     if (_verified.Contains(pid)) { _joinTimes.Remove(pid); continue; }
-                    if (now - kv.Value < 1f) continue; // 1 秒超时
+                    if (now - kv.Value < timeout) continue; // 窗口内不做任何判定
 
                     _joinTimes.Remove(pid);
+                    _pending.Remove(pid);
                     string name = _names.TryGetValue(pid, out var n) ? n : $"P{pid}";
                     HandleMismatch(pid, name, MismatchKind.NoHandshake);
                 }
 
-                // 清理已离开玩家（红名记录/未验证标记），并恢复其名字颜色
+                // 清理已离开玩家（等待/未通过记录），并恢复其名字颜色
+                foreach (var pid in new List<byte>(_pending))
+                {
+                    if (GetPlayerControl(pid) == null)
+                    {
+                        RestoreNameColor(pid);
+                        CleanupPlayer(pid);
+                    }
+                }
                 foreach (var pid in new List<byte>(_unverified))
                 {
                     if (GetPlayerControl(pid) == null)
@@ -164,7 +183,6 @@ public static class HandshakeManager
                         LightLogger.Log($"[Handshake] 玩家离开，清理 pid={pid}");
                     }
                 }
-                if (_joinTimes.Count == 0) _timeoutLoopRunning = false;
             }
             catch (Exception ex)
             {
@@ -192,17 +210,12 @@ public static class HandshakeManager
             byte targetId = reader.ReadByte();
             if (targetId != local.PlayerId) return; // 广播给所有人，只有目标玩家响应
             int nonce = reader.ReadInt32();
-            _pendingNonce = nonce;
-            LightLogger.Log($"[Handshake] 收到房主挑战 nonce={nonce}");
+            LightLogger.LogDebug($"[Handshake] 收到房主挑战 nonce={nonce}");
 
-            string url = LightPlugin.LightSettingsData.VerifyServerUrl;
-            if (string.IsNullOrEmpty(url))
-            {
-                LightLogger.Log("[Handshake] 未配置验证服务器，握手跳过（禁用状态）");
-                return;
-            }
+            if (!IsEnabled) return; // 握手未启用
 
             // 缓存票据仅用于服务器暂时不可达时的宽限；nonce 一次性，必须重新拉票。
+            string url = LightPlugin.LightSettingsData.VerifyServerUrl;
             _ = Task.Run(() => FetchTicketAsync(url, nonce));
         }
         catch (Exception ex)
@@ -220,7 +233,7 @@ public static class HandshakeManager
             string accountId = GetLocalAccountId();
             var payload = new
             {
-                version = HandshakeCrypto.ProtocolVersion,
+                version = HandshakeCrypto.VerifyVersion,
                 apiHash = _localApiHash,
                 modHash = _localModHash,
                 accountId,
@@ -237,6 +250,7 @@ public static class HandshakeManager
             if (!resp.IsSuccessStatusCode)
             {
                 LightLogger.LogWarning($"[Handshake] 服务器拒绝票据: {(int)resp.StatusCode} {body}");
+                AbortHandshakeNoTicket("服务器拒绝");
                 return;
             }
 
@@ -244,6 +258,7 @@ public static class HandshakeManager
             if (!doc.RootElement.GetProperty("ok").GetBoolean())
             {
                 LightLogger.LogWarning("[Handshake] 服务器返回 ok=false");
+                AbortHandshakeNoTicket("服务器返回 ok=false");
                 return;
             }
 
@@ -257,8 +272,23 @@ public static class HandshakeManager
         }
         catch (Exception ex)
         {
-            LightLogger.LogWarning($"[Handshake] 获取票据失败（宽限处理，不影响游玩）: {ex.Message}");
+            LightLogger.LogWarning($"[Handshake] 获取票据失败: {ex.Message}");
+            AbortHandshakeNoTicket("请求异常");
         }
+    }
+
+    /// <summary>
+    /// 取不到本次票据时：**直接不发握手**。
+    ///
+    /// ⚠️ 明确**不使用缓存票据"宽限"**：缓存票据的 nonce 属于**上一次**挑战，
+    ///    而房主严格比对「票据 nonce == 本次 challenge 的 nonce」→ 必然被判
+    ///    <see cref="MismatchKind.Tampered"/>，把"服务器不可达"误报成"疑似被篡改"
+    ///    （Warn 模式公开误指、Kick 模式还会提前踢人）。
+    ///    不发则交给房主按超时判定（NoHandshake），结论更准确。
+    /// </summary>
+    private static void AbortHandshakeNoTicket(string why)
+    {
+        LightLogger.LogWarning($"[Handshake] 未取得本次票据（{why}），本次不发握手，交由房主超时判定");
     }
 
     private static void SendHandshake()
@@ -348,7 +378,8 @@ public static class HandshakeManager
 
             _verified.Add(playerId);
             _joinTimes.Remove(playerId);
-            _unverified.Remove(playerId); // 验证通过，解除红名/阻止开始
+            _pending.Remove(playerId);     // 等待验证结束
+            _unverified.Remove(playerId);  // 验证通过，解除红名/阻止开始
             RestoreNameColor(playerId);
             LightLogger.Log($"[Handshake] {name} 验证通过 (playerId={playerId})");
         }
@@ -534,6 +565,7 @@ public static class HandshakeManager
     /// <summary>玩家离开后清理其红名记录（由加入补丁每帧或离开时调用）。</summary>
     public static void CleanupPlayer(byte playerId)
     {
+        _pending.Remove(playerId);
         _unverified.Remove(playerId);
         _verified.Remove(playerId);
         _joinTimes.Remove(playerId);

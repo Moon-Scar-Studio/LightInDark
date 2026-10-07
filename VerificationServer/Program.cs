@@ -19,7 +19,7 @@ using System.Text.Json;
 // 配置：
 //   首次运行自动生成 ECDSA P-256 密钥对（private.pem / public.pem）。
 //   官方 hash 列表放同目录 official.json：
-//     { "versions": [ { "version": "1.0.0", "apiHash": 123, "modHash": 456 } ] }
+//     { "versions": [ { "version": "0.0.1", "apiHash": 123, "modHash": 456 } ] }
 //   票据有效期 24 小时（与客户端缓存一致）。
 // =====================================================================
 
@@ -53,7 +53,7 @@ if (!File.Exists(officialPath))
     {
         versions = new object[]
         {
-            new { version = "1.0.0", apiHash = 0, modHash = 0 }
+            new { version = "0.0.1", apiHash = 0, modHash = 0 }
         }
     };
     File.WriteAllText(officialPath, JsonSerializer.Serialize(sample, new JsonSerializerOptions { WriteIndented = true }));
@@ -84,7 +84,7 @@ OfficialHashes LoadOfficial()
 
 // ---------- 票据编码 ----------
 // payload = [1B accountIdLen][accountId utf8][1B versionLen][version utf8][4B nonce][4B apiHash][4B modHash][8B exp(unix)]
-// ticket  = base64( payload || 签名(64B, P-256 DER) )
+// ticket  = base64( payload || 签名(64B, IEEE P1363 r‖s) )
 static byte[] BuildPayload(string accountId, string version, int nonce, int apiHash, int modHash, long exp)
 {
     var acc = Encoding.UTF8.GetBytes(accountId ?? "");

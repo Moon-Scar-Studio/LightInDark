@@ -15,7 +15,7 @@
 
 **为什么防篡改**:篡改 dll → 文件 hash 变 → 服务器 `official.json` 里没有该 hash → 拒签 → 玩家拿不到合法票据 → 房主验签失败。改代码容易,但**没有服务器私钥签不出有效票据**;改 hash 上报也会被"票据内 hash ≠ 上报 hash"拆穿;借别人票据会被 nonce(每局一次性)+ accountId(绑定账号身份)识破。
 
-**已知边界**:票据缓存 24h,服务器不可达时宽限(不拦截);纯离线/故意不发握手的玩家靠"12 秒超时提示"兜底,但理论上无法 100% 拦截所有本地伪造(MonoMod 级修改模组本身)。这是"反普通篡改 + 提高绕过成本"的务实方案。
+**已知边界**:服务器不可达/拒签时**不发握手**,由房主按超时(默认 10 秒,可配)判定;纯离线/故意不发握手的玩家靠超时兜底,但理论上无法 100% 拦截所有本地伪造(MonoMod 级修改模组本身)。这是"反普通篡改 + 提高绕过成本"的务实方案。
 
 ---
 
@@ -36,7 +36,7 @@ dotnet run -c Release --project VerificationServer --urls http://0.0.0.0:58080
 ```json
 {
   "versions": [
-    { "version": "1.0.0", "apiHash": -871552443, "modHash": 1180251441 }
+    { "version": "0.0.1", "apiHash": -871552443, "modHash": 1180251441 }
   ]
 }
 ```
@@ -46,7 +46,7 @@ dotnet run -c Release --project VerificationServer --urls http://0.0.0.0:58080
 - 发布: `dotnet publish -c Release`
 - 建议用 Nginx/反代加 HTTPS(票据内容会签名但明文传输,HTTPS 防窃听/中间人)
 - `data/` 目录持久化(密钥、official.json 都在里面),重启不丢失
-- 健康检查: `GET /verify` 服务器地址 + `/health`
+- 健康检查: `GET /health`
 
 ### 4. 把公钥写进模组
 `GET <服务器>/pubkey` 返回 PEM,替换
@@ -75,19 +75,24 @@ $mod = Get-FileHash 'Output\Light.dll' -Algorithm SHA256
 
 ```json
 {
-  "VerifyServerUrl": "https://your-server.com",
-  "HandshakeMode": 0
+  "VerifyServerUrl": "https://lidverify.moonscar.cn",
+  "EnableHandshake": false,
+  "HandshakeMode": 0,
+  "HandshakeTimeoutSeconds": 10
 }
 ```
 
 | 字段 | 值 | 效果 |
 |---|---|---|
-| `VerifyServerUrl` | 空(默认) | **整个握手禁用** |
-| | `https://...` | 启用:进大厅自动挑战-应答验证 |
+| `EnableHandshake` | `false`(默认) | **整个握手禁用**(不校验、不请求票据) |
+| | `true` | 启用握手验证 |
+| `VerifyServerUrl` | 空 | 即使开关打开也不生效 |
+| | `https://lidverify.moonscar.cn`(默认非空) | 启用时请求此服务器签发票据 |
 | `HandshakeMode` | `0`(默认) | 仅提示(右下角原生提示) |
 | | `1` | 提示后 3 秒踢出 |
+| `HandshakeTimeoutSeconds` | `10`(默认,夹 1~60) | 加入后多久未完成握手即判定失败 |
 
-**注意**:所有玩家(含房主)都要配置同一个 `VerifyServerUrl` 才有效——房主必须开,玩家不开的话房主收不到握手 → 12 秒超时提示。
+**注意**:启用时所有玩家(含房主)都要配置同一个 `VerifyServerUrl` 才有效——房主必须开,玩家不开的话房主收不到握手 → 超时提示。
 
 ---
 
@@ -97,7 +102,7 @@ $mod = Get-FileHash 'Output\Light.dll' -Algorithm SHA256
 |---|---|
 | 发新版本模组 | 更新服务器 `official.json` 的 hash → 玩家自动通过 |
 | 换服务器域名 | 改玩家 `Settings.json` 的 `VerifyServerUrl` + 重新嵌入公钥 |
-| 被盗私钥 | **立刻**换密钥对:重新生成 → 更新服务器私钥 + 重新嵌入公钥 → 旧玩家票据全失效需重新获取(服务器不可达时会宽限) |
+| 被盗私钥 | **立刻**换密钥对:重新生成 → 更新服务器私钥 + 重新嵌入公钥 → 旧玩家票据全失效需重新获取 |
 | 想强制所有人用 | `HandshakeMode=1` 只影响房主自己的判断;要全局强制需把默认值改代码或做云端配置下发 |
 
 ---

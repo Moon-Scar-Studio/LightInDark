@@ -116,8 +116,9 @@ public partial class LightPlugin : BasePlugin
             try { Audio.BassMusicPlayer.Ensure(); } catch { }
             ChatHistoryLogUtils.Init(); // 聊天历史记录。
 
-            // 握手验证暂停 2026-09-26
-            // Handshake.HandshakeManager.Initialize();
+            // 握手验证：注册挑战/握手 RPC 处理器并缓存本地 hash；
+            // 是否真正生效由 HandshakeManager.IsEnabled（设置开关 + 服务器地址）决定
+            Handshake.HandshakeManager.Initialize();
 
             NewsManager.LoadNews(); // 加载新闻。
             InitializeMusicPlayer(); // 音乐播放器（F3 自绘窗口）；失败只记日志，绝不让 Load 抛

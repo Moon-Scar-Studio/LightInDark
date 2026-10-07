@@ -48,6 +48,14 @@ public static class LightSettings
         /// </summary>
         public int HandshakeMode { get; set; } = 0;
         /// <summary>
+        /// 是否启用握手验证（默认关闭）。关闭时不校验玩家、不请求票据。
+        /// </summary>
+        public bool EnableHandshake { get; set; } = false;
+        /// <summary>
+        /// 握手验证超时时间（秒），范围 1~60，默认 10 秒。
+        /// </summary>
+        public float HandshakeTimeoutSeconds { get; set; } = 10f;
+        /// <summary>
         /// 启动时自动检查模组更新。
         /// 关掉之后加载页不再请求 version.json（也就不会显示新版本金字）；
         /// 主界面「检查更新」按钮仍然可以手动跑。
@@ -75,9 +83,12 @@ public static class LightSettings
                 Save(result);
             }
             if (result.MaxFPS > 150) result.MaxFPS = 150;
+            if (result.HandshakeTimeoutSeconds < 1f) result.HandshakeTimeoutSeconds = 1f;
+            if (result.HandshakeTimeoutSeconds > 60f) result.HandshakeTimeoutSeconds = 60f;
 
             // 迁移：旧配置文件缺少新字段时，自动补默认值并写回（保证 VerifyServerUrl/HandshakeMode 等存在）
-            if (!json.Contains("VerifyServerUrl") || !json.Contains("HandshakeMode") || !json.Contains("SkipLoadAnimation"))
+            if (!json.Contains("VerifyServerUrl") || !json.Contains("HandshakeMode") || !json.Contains("SkipLoadAnimation")
+                || !json.Contains("EnableHandshake") || !json.Contains("HandshakeTimeoutSeconds"))
             {
                 LightLogger.Log("设置文件缺少新字段，自动补齐默认值。");
                 Save(result);
