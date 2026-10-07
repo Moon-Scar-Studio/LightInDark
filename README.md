@@ -50,11 +50,12 @@
 - 画师没注册过Github。帮帮我们。
 </details>
 
+
 ## 参考来源
 
 **※ 不分先后顺序**
-- [FinalSuspect](https://github.com/Slok7565/FinalSuspect) 从该项目取得了服务器下拉选择框排版更改、背景图替换。  
-- [Nebula on The Ship](https://github.com/Dolly1016/Nebula) 许多API的Util部分、Role注册均源于NoS  
+- [FinalSuspect](https://github.com/Slok7565/FinalSuspect) 从该项目得知了如何更改服务器下拉选择框排版以及背景图替换的正确方式。  
+- [Nebula on The Ship](https://github.com/Dolly1016/Nebula) 许多API的Util部分、Role注册、Button排版以及注册源于NoS  
 - [AUnlocker](https://github.com/astra1dev/AUnlocker) 装扮解锁、会议中显示任务面板均源于此项目。   
 - [TownofNext-Edited](https://github.com/qin-qwq/TownofNext-Edited) 从此项目了解了更改文本框上方limit文字的方法以及聊天框复制粘贴全选功能。  
 - [Reactor](https://github.com/NuclearPowered/Reactor) 从此项目了解了自定义RPC的正确注册方式。  
