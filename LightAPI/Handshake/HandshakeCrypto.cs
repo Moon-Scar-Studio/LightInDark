@@ -24,9 +24,6 @@ namespace LightInDark.Handshake
             "AzBtgX7o9w3d1vB6M5qclqsXZ5dMNiUiFRNlEMbFJNVnlj5007wj/mVLFw==\n" +
             "-----END PUBLIC KEY-----";
 
-        /// <summary>握手验证版本号，与模组版本及服务器 official.json 的 version 一致。</summary>
-        public const string VerifyVersion = "0.0.1";
-
         /// <summary>
         /// 计算文件 hash（SHA256 前 4 字节 → int32）。
         /// 与服务器 official.json 中记录的 apiHash/modHash 一致。
@@ -125,8 +122,9 @@ namespace LightInDark.Handshake
         /// 解析并验证票据（签名 + 版本 + 过期），返回票据内嵌的信息。
         /// 不做 hash 比对（由调用方决定比对基准）。
         /// </summary>
+        /// <param name="expectedVersion">期望的版本号（调用方传模组版本，单一来源）。</param>
         /// <returns>true 表示票据由官方服务器签发且未过期。</returns>
-        public static bool TryParse(string ticketBase64,
+        public static bool TryParse(string ticketBase64, string expectedVersion,
             out string accountId, out long exp,
             out int apiHash, out int modHash, out string version,
             out int nonce)
@@ -146,7 +144,8 @@ namespace LightInDark.Handshake
 
                 int o = 0;
                 int accLen = raw[o++];
-                if (accLen > 64) return false;
+                // accountId 之后至少还要有 verLen(1) + nonce(4) + apiHash(4) + modHash(4) + exp(8) + sig(64)
+                if (accLen > 64 || o + accLen > raw.Length - (1 + 4 + 4 + 4 + 8 + 64)) return false;
                 accountId = Encoding.UTF8.GetString(raw, o, accLen); o += accLen;
 
                 int verLen = raw[o++];
@@ -158,7 +157,7 @@ namespace LightInDark.Handshake
                 modHash = ReadInt32(raw, ref o);
                 exp = ReadInt64(raw, ref o);
 
-                if (version != VerifyVersion) return false;
+                if (!string.Equals(version, expectedVersion, StringComparison.Ordinal)) return false;
                 if (exp < DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return false; // 过期
 
                 int payloadLen = o;

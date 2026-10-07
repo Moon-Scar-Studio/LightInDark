@@ -49,13 +49,8 @@ else
 string officialPath = Path.Combine(dataDir, "official.json");
 if (!File.Exists(officialPath))
 {
-    var sample = new
-    {
-        versions = new object[]
-        {
-            new { version = "0.0.1", apiHash = 0, modHash = 0 }
-        }
-    };
+    // 初始为空白名单：未登记真实 hash 前一律拒签（避免 0/0 占位被当作合法版本放行）
+    var sample = new { versions = Array.Empty<object>() };
     File.WriteAllText(officialPath, JsonSerializer.Serialize(sample, new JsonSerializerOptions { WriteIndented = true }));
 }
 
@@ -91,9 +86,9 @@ static byte[] BuildPayload(string accountId, string version, int nonce, int apiH
     var ver = Encoding.UTF8.GetBytes(version ?? "");
     var buf = new byte[1 + acc.Length + 1 + ver.Length + 4 + 4 + 4 + 8];
     int o = 0;
-    buf[o++] = (byte)Math.Min(255, acc.Length);
+    buf[o++] = (byte)acc.Length;   // 长度已在校验中限制为 ≤64
     Array.Copy(acc, 0, buf, o, acc.Length); o += acc.Length;
-    buf[o++] = (byte)Math.Min(255, ver.Length);
+    buf[o++] = (byte)ver.Length;   // 长度已在校验中限制为 ≤32
     Array.Copy(ver, 0, buf, o, ver.Length); o += ver.Length;
     WriteInt32(buf, ref o, nonce);
     WriteInt32(buf, ref o, apiHash);
@@ -126,6 +121,14 @@ app.MapPost("/verify", (VerifyRequest req) =>
 {
     if (req == null || string.IsNullOrEmpty(req.version))
         return Results.BadRequest(new { reason = "missing version" });
+
+    // 0 是客户端 hash 定位失败的哨兵值，不是有效构建
+    if (req.apiHash == 0 || req.modHash == 0)
+        return Results.Json(new { ok = false, reason = "local hash unavailable" }, statusCode: StatusCodes.Status403Forbidden);
+
+    // 长度上限与客户端解析一致（accountId ≤64、version ≤32），保证长度字节自描述一致
+    if (Encoding.UTF8.GetByteCount(req.accountId ?? "") > 64 || Encoding.UTF8.GetByteCount(req.version) > 32)
+        return Results.Json(new { ok = false, reason = "field too long" }, statusCode: StatusCodes.Status403Forbidden);
 
     var official = LoadOfficial();
     var match = official.Versions.FirstOrDefault(v =>

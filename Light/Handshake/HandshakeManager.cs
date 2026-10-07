@@ -7,7 +7,6 @@ using LightInDark.RPCs;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -35,16 +34,10 @@ public static class HandshakeManager
 {
     private const string ChallengeRpcHash = "Light.Handshake.Challenge";
     private const string HandshakeRpcHash = "Light.Handshake";
-    private static readonly string CachePath =
-        Path.Combine(LightPlugin.LightUserDataPath, "HandshakeCache.json");
 
     private static int _localApiHash;
     private static int _localModHash;
     private static bool _initialized;
-
-    // 客户端状态
-    private static string _ticket = "";
-    private static long _ticketExp;
 
     // 房主状态
     private static readonly Dictionary<byte, int> _issuedNonces = new();      // playerId → nonce
@@ -81,9 +74,8 @@ public static class HandshakeManager
             _initialized = true;
 
             (_localApiHash, _localModHash) = HandshakeCrypto.ComputeLocalHashes();
-            LightLogger.Log($"[Handshake] 本地 hash: api={_localApiHash} mod={_localModHash}");
-            
-            LoadCache();
+            LightLogger.Log($"[Handshake] 本地 hash: api={_localApiHash} mod={_localModHash} 版本={LightPlugin.Version}");
+
             CustomRPC.Register(ChallengeRpcHash, OnChallengeReceived);
             CustomRPC.Register(HandshakeRpcHash, OnHandshakeReceived);
         }
@@ -92,8 +84,6 @@ public static class HandshakeManager
             LightLogger.LogError("[HandshakeManager.Initialize]", ex);
         }
     }
-
-    private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
     // =====================================================================
     // 房主侧：玩家加入 → 发挑战 + 启动超时兜底
@@ -209,6 +199,16 @@ public static class HandshakeManager
 
             byte targetId = reader.ReadByte();
             if (targetId != local.PlayerId) return; // 广播给所有人，只有目标玩家响应
+
+            // 挑战必须来自房主：否则任意客户端都能广播假挑战，诱导本机用错误 nonce 应答后被房主误判
+            byte sender = CustomRPC.CurrentSender;
+            byte hostPid = GetHostPlayerId();
+            if (sender != byte.MaxValue && hostPid != byte.MaxValue && sender != hostPid)
+            {
+                LightLogger.LogWarning($"[Handshake] 忽略非房主发来的挑战（sender={sender}, host={hostPid}）");
+                return;
+            }
+
             int nonce = reader.ReadInt32();
             LightLogger.LogDebug($"[Handshake] 收到房主挑战 nonce={nonce}");
 
@@ -233,7 +233,7 @@ public static class HandshakeManager
             string accountId = GetLocalAccountId();
             var payload = new
             {
-                version = HandshakeCrypto.VerifyVersion,
+                version = LightPlugin.Version,
                 apiHash = _localApiHash,
                 modHash = _localModHash,
                 accountId,
@@ -262,13 +262,12 @@ public static class HandshakeManager
                 return;
             }
 
-            _ticket = doc.RootElement.GetProperty("ticket").GetString() ?? "";
-            _ticketExp = doc.RootElement.GetProperty("exp").GetInt64();
-            SaveCache();
-            LightLogger.Log($"[Handshake] 票据获取成功，exp={_ticketExp}");
+            string ticket = doc.RootElement.GetProperty("ticket").GetString() ?? "";
+            long exp = doc.RootElement.GetProperty("exp").GetInt64();
+            LightLogger.Log($"[Handshake] 票据获取成功，exp={exp}");
 
-            // 回到主线程发握手
-            Dispatcher.Instance?.Enqueue(SendHandshake);
+            // 回到主线程发握手；票据随闭包传递，避免多挑战并发时被共享状态覆盖
+            Dispatcher.Instance?.Enqueue(() => SendHandshake(ticket));
         }
         catch (Exception ex)
         {
@@ -278,24 +277,19 @@ public static class HandshakeManager
     }
 
     /// <summary>
-    /// 取不到本次票据时：**直接不发握手**。
-    ///
-    /// ⚠️ 明确**不使用缓存票据"宽限"**：缓存票据的 nonce 属于**上一次**挑战，
-    ///    而房主严格比对「票据 nonce == 本次 challenge 的 nonce」→ 必然被判
-    ///    <see cref="MismatchKind.Tampered"/>，把"服务器不可达"误报成"疑似被篡改"
-    ///    （Warn 模式公开误指、Kick 模式还会提前踢人）。
-    ///    不发则交给房主按超时判定（NoHandshake），结论更准确。
+    /// 取不到本次票据时**直接不发握手**：交由房主按超时判定（NoHandshake）。
+    /// 若用非本次 nonce 的旧票据发送，会被房主判为"疑似被篡改"，故宁可不发。
     /// </summary>
     private static void AbortHandshakeNoTicket(string why)
     {
         LightLogger.LogWarning($"[Handshake] 未取得本次票据（{why}），本次不发握手，交由房主超时判定");
     }
 
-    private static void SendHandshake()
+    private static void SendHandshake(string ticket)
     {
         try
         {
-            if (string.IsNullOrEmpty(_ticket)) return;
+            if (string.IsNullOrEmpty(ticket)) return;
             if (AmongUsClient.Instance?.AmHost == true) return;
             var player = PlayerControl.LocalPlayer;
             if (player == null) return;
@@ -305,7 +299,7 @@ public static class HandshakeManager
                 w.Write(player.PlayerId);
                 w.Write(_localApiHash);
                 w.Write(_localModHash);
-                w.Write(_ticket);
+                w.Write(ticket);
             }, reliable: true);
 
             LightLogger.Log($"[Handshake] 已发送握手 (player={player.PlayerId})");
@@ -338,11 +332,19 @@ public static class HandshakeManager
             int modHash = reader.ReadInt32();
             string ticket = reader.ReadString();
 
+            // ⓪ 身份校验：报文自称的 playerId 必须等于真实发送者，防止冒用他人身份栽赃
+            byte sender = CustomRPC.CurrentSender;
+            if (sender != byte.MaxValue && playerId != sender)
+            {
+                LightLogger.LogWarning($"[Handshake] 报文 playerId={playerId} 与真实发送者 {sender} 不一致，忽略");
+                return;
+            }
+
             string name = GetPlayerName(playerId);
             _names[playerId] = name;
 
-            // ① 票据签名 + 过期 + 版本
-            bool sigOk = HandshakeCrypto.TryParse(ticket,
+            // ① 票据签名 + 过期 + 版本（版本以本机模组版本为单一来源）
+            bool sigOk = HandshakeCrypto.TryParse(ticket, LightPlugin.Version,
                 out string ticketAccount, out _, out int tkApi, out int tkMod, out _, out int tkNonce);
 
             if (!sigOk)
@@ -411,7 +413,7 @@ public static class HandshakeManager
                     log = $"[Handshake] {name} 版本不一致 (playerId={playerId})";
                     break;
                 default:
-                    msg = $"{name} 模组版本不匹配！";
+                    msg = $"{name} 未完成模组验证！";
                     log = $"[Handshake] {name} 超时未完成握手 (playerId={playerId})";
                     break;
             }
@@ -439,6 +441,8 @@ public static class HandshakeManager
         yield return new WaitForSeconds(delay);
         try
         {
+            // 延迟期间该玩家可能已离开 / 已通过验证 / PlayerId 被新玩家复用 → 踢前复检
+            if (!_unverified.Contains(playerId) || GetPlayerControl(playerId) == null) yield break;
             RpcDefinitions.KickPlayerWithReason(playerId, "模组版本不匹配或疑似被篡改");
         }
         catch (Exception ex)
@@ -514,6 +518,18 @@ public static class HandshakeManager
         return null;
     }
 
+    /// <summary>取房主的 PlayerId；无法确定时返回 <see cref="byte.MaxValue"/>。</summary>
+    private static byte GetHostPlayerId()
+    {
+        try
+        {
+            var client = AmongUsClient.Instance?.GetClient(AmongUsClient.Instance.HostId);
+            if (client?.Character != null) return client.Character.PlayerId;
+        }
+        catch { }
+        return byte.MaxValue;
+    }
+
     private static string GetPlayerName(byte id)
     {
         try
@@ -572,39 +588,5 @@ public static class HandshakeManager
         _issuedNonces.Remove(playerId);
         _names.Remove(playerId);
         _origNameColors.Remove(playerId);
-    }
-
-    // ======================= 票据缓存 =======================
-
-    private static void SaveCache()
-    {
-        try
-        {
-            FileUtil.EnsureDirectoryExists(CachePath);
-            File.WriteAllText(CachePath, JsonSerializer.Serialize(new { ticket = _ticket, exp = _ticketExp }));
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[HandshakeManager.SaveCache]", ex);
-        }
-    }
-
-    private static void LoadCache()
-    {
-        try
-        {
-            if (!File.Exists(CachePath)) return;
-            string json = File.ReadAllText(CachePath);
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("ticket", out var t)) return;
-            long exp = doc.RootElement.TryGetProperty("exp", out var e) ? e.GetInt64() : 0;
-            if (exp < Now()) return; // 已过期
-            _ticket = t.GetString() ?? "";
-            _ticketExp = exp;
-        }
-        catch (Exception ex)
-        {
-            LightLogger.LogError("[HandshakeManager.LoadCache]", ex);
-        }
     }
 }

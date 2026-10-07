@@ -11,6 +11,16 @@ namespace Light.Handshake;
 [HarmonyPatch(typeof(GameStartManager))]
 public static class HandshakeLobbyGatePatch
 {
+    // 是否由本补丁置灰了开始按钮（仅在这种情况下才负责恢复，避免覆盖原版自身的可用性判断）
+    static bool _weDisabledButton;
+
+    /// <summary>是否应阻止开始：有等待验证者始终阻止；未通过者仅在 Kick 模式下阻止（Warn 模式只提示、不拦开始）。</summary>
+    static bool ShouldBlock()
+    {
+        bool kickMode = (LightPlugin.LightSettingsData?.HandshakeMode ?? 0) == (int)HandshakeModeOption.Kick;
+        return HandshakeManager.HasPending() || (kickMode && HandshakeManager.HasUnverified());
+    }
+
     [HarmonyPatch(nameof(GameStartManager.Update))]
     [HarmonyPostfix]
     public static void UpdatePostfix(GameStartManager __instance)
@@ -30,24 +40,25 @@ public static class HandshakeLobbyGatePatch
                     HandshakeManager.RestoreNameColor(pc.PlayerId);
             }
 
-            bool blocked = HandshakeManager.HasPending() || HandshakeManager.HasUnverified();
-            if (blocked)
+            if (ShouldBlock())
             {
                 __instance.startState = GameStartManager.StartingStates.NotStarting;
                 if (__instance.StartButton != null)
                 {
                     __instance.StartButton.SetButtonEnableState(false);
                     __instance.StartButton.ChangeButtonText("正在等待玩家");
+                    _weDisabledButton = true;
                 }
                 if (__instance.GameStartText != null)
                 {
                     __instance.GameStartText.text = "正在等待玩家";
                 }
             }
-            else if (__instance.StartButton != null)
+            else if (_weDisabledButton && __instance.StartButton != null)
             {
-                // 阻塞解除：恢复按钮可用（文案交由原版刷新，避免写错默认文案）
+                // 只恢复"本补丁置灰"的按钮；文案交由原版刷新
                 __instance.StartButton.SetButtonEnableState(true);
+                _weDisabledButton = false;
             }
         }
         catch (System.Exception ex)
@@ -64,7 +75,7 @@ public static class HandshakeLobbyGatePatch
         {
             if (AmongUsClient.Instance?.AmHost != true) return true;
             if (!HandshakeManager.IsEnabled) return true;
-            if (!HandshakeManager.HasPending() && !HandshakeManager.HasUnverified()) return true;
+            if (!ShouldBlock()) return true;
 
             __instance.startState = GameStartManager.StartingStates.NotStarting;
             if (__instance.StartButton != null)
