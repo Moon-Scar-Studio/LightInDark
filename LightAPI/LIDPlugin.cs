@@ -24,7 +24,7 @@ public partial class LIDPlugin : BasePlugin
 {
     public Harmony Harmony { get; } = new("LightAPI.harmony");
     public const string Version = "0.0.1";
-    public const string VisualVersion = "Dev 1.0.0";
+    public const string VisualVersion = "v 0.0.1";
     public const string RichVersion = "<color=#4FD1C5>ver</color> <color=#38B2AC>1.0.0</color>";
     public static string AUVersion;
     public override void Load()

@@ -108,6 +108,66 @@ namespace LightInDark.UI.Ability
                 // 初始为满冷却遮罩（数字+进度由 UpdateCooldownDisplay 每帧驱动）
                 _actionButton.SetCoolDown(_config.Cooldown, _config.Cooldown);
             }
+
+            // ★ 2026-10-06 用户报「冷却动画还是只在最后三秒转一下」→ **无条件**重算一次 UV ✓
+            //   `Icon == null` 时上面 `ApplyIcon` 会提前 return，**不会**重算 ✗
+            //   而克隆体材质带的是**原版按钮那张图**的 uv 包围盒 ✗ ——
+            //   只要 `graphic.sprite` 和原版不完全一致（换图/换尺寸/图集不同），遮罩就会错位 ✓
+            //   这里再兜一次（幂等、开销可忽略），并**打一条一次性诊断**把真实数值打出来 ✓
+            try
+            {
+                _actionButton.graphic.SetCooldownNormalizedUvs();
+                DiagnoseUvOnce();
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[AbilityButton.ApplyConfig] UV 重算失败: {ex.Message}");
+            }
+        }
+
+        private static bool _uvLogged;
+
+        /// <summary>
+        /// 一次性把**冷却遮罩的真实数值**打出来（用户报"动画只在最后三秒转"时用来定位 ✓）：
+        /// shader 靠 `_Percent`（进度）+ `_NormalizedUvs`（**当前 sprite 的 uv 包围盒**）画遮罩，
+        /// 两者任一不对都会表现成"遮罩跑到按钮外面 / 只在某一小段可见" ✗
+        /// </summary>
+        private void DiagnoseUvOnce()
+        {
+            if (_uvLogged) return;
+            _uvLogged = true;
+            try
+            {
+                var g = _actionButton.graphic;
+                if (g == null || g.material == null) return;
+
+                var uv = g.material.GetVector("_NormalizedUvs");
+                string spriteName = g.sprite != null ? g.sprite.name : "null";
+                string bounds = "null";
+                if (g.sprite != null)
+                {
+                    var uvs = g.sprite.uv;
+                    if (uvs != null && uvs.Length > 0)
+                    {
+                        float minX = uvs[0].x, maxX = uvs[0].x, minY = uvs[0].y, maxY = uvs[0].y;
+                        foreach (var t in uvs)
+                        {
+                            if (t.x < minX) minX = t.x;
+                            if (t.x > maxX) maxX = t.x;
+                            if (t.y < minY) minY = t.y;
+                            if (t.y > maxY) maxY = t.y;
+                        }
+                        bounds = $"({minX:0.###},{maxX:0.###},{minY:0.###},{maxY:0.###})";
+                    }
+                }
+
+                LightLogger.Log($"[UV] 按钮={_gameObject?.name} sprite={spriteName} " +
+                                $"spriteUvBounds={bounds} _NormalizedUvs=({uv.x:0.###},{uv.y:0.###},{uv.z:0.###},{uv.w:0.###})");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[AbilityButton.DiagnoseUvOnce] {ex.Message}");
+            }
         }
 
         /// <summary>

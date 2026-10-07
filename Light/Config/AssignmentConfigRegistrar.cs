@@ -50,7 +50,26 @@ internal static class AssignmentConfigRegistrar
                 LightInDark.Language.Language.Translate("config.assignment.neutralMax.detail",
                     "一局里最多给几个中立分自定义职业（默认 1）"));
 
-            LightLogger.Log("[AssignmentConfigRegistrar] 分配设置注册完成（船员/内鬼/中立上限，默认 2/2/1）");
+            // ★ 审查 B7 下半：**下限** —— "至少发这么多个"（默认 0 = 不改变现状 ✓）
+            block.AddConfiguration(
+                "lid.assignment.crewmateMin", 0, 0, 15, 1,
+                LightInDark.Language.Language.Translate("config.assignment.crewmateMin", "船员职业数下限"),
+                LightInDark.Language.Language.Translate("config.assignment.crewmateMin.detail",
+                    "一局里**至少**给几个船员分自定义职业（忽略概率，但仍受各职业数量上限约束）。默认 0 = 不限制"));
+
+            block.AddConfiguration(
+                "lid.assignment.impostorMin", 0, 0, 15, 1,
+                LightInDark.Language.Language.Translate("config.assignment.impostorMin", "内鬼职业数下限"),
+                LightInDark.Language.Language.Translate("config.assignment.impostorMin.detail",
+                    "一局里**至少**给几个内鬼分自定义职业（忽略概率，但仍受各职业数量上限约束）。默认 0 = 不限制"));
+
+            block.AddConfiguration(
+                "lid.assignment.neutralMin", 0, 0, 15, 1,
+                LightInDark.Language.Language.Translate("config.assignment.neutralMin", "中立职业数下限"),
+                LightInDark.Language.Language.Translate("config.assignment.neutralMin.detail",
+                    "一局里**至少**给几个中立分自定义职业（忽略概率，但仍受各职业数量上限约束）。默认 0 = 不限制"));
+
+            LightLogger.Log("[AssignmentConfigRegistrar] 分配设置注册完成（上限 2/2/1 + 下限 0/0/0，默认 = 现状）");
         }
         catch (Exception ex)
         {

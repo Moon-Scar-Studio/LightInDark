@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "VerificationServer": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:61760;http://localhost:61761"
+    }
+  }
+}

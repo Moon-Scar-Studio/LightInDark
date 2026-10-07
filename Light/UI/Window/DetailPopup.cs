@@ -28,35 +28,381 @@ namespace Light.UI.Window;
 /// </summary>
 public static class DetailPopup
 {
-    /// <summary>可按 Tab 固定时：正文下面空一行，前面加几个空格，营造"在右下角"的感觉。</summary>
-    private const string PinHint = "\n\n        <b>可按tab固定介绍</b>";
+    /// <summary>
+    /// 可按 Tab 固定时，原来会在正文下面补一行"可按tab固定介绍" ✗
+    /// ⚠️ 用户 2026-10-06 要求：**功能保留、文字删掉** ✓ → 这里改成空串（`canPinByTab` 的固定逻辑照旧 ✓）
+    /// </summary>
+    private const string PinHint = "";
 
-    // ── 尺寸 / 配色（要调外观改这里）────────────────────────────────
-    private const float FallbackFontSize = 1.6f;                      // anchor 上没文字时才用这个字号
-    private const float SizeScale = 1.0f;                             // 说明文字相对"那一行文字"的大小（1.0 = 一样大）
-    private const float BoldOutlineWidth = 0.06f;                     // 加粗强度：**越小越干净**，0.15 以上会糊
-    private const float PadX = 0.20f;                                 // 字形左右留白
-    private const float PadY = 0.12f;                                 // 字形上下留白
-    private const float BoxMinWidth = 0.30f;
-    private const float BoxMinHeight = 0.20f;
-    private const float BorderThickness = 0.020f;                     // 淡金边框粗细
-    private const float BoxZOffset = -1.0f;                           // 相对被悬浮行的 z 偏移（更靠前）
+    /// <summary>锚点那一行没有文字时才用这个字号（× <see cref="DetailPopupStyle.FontScale"/>）</summary>
+    private const float FallbackFontSize = 1.6f;
 
-    private static readonly UColor FillColor = new UColor(0.22f, 0.22f, 0.22f, 0.85f);      // 半透明灰底
-    private static readonly UColor BorderColor = new UColor(1f, 0.90f, 0.63f, 0.95f);       // 淡金边框
-    private static readonly UColor TextColor = new UColor(1f, 0.95f, 0.85f, 1f);            // 辉光白
+    // ── 尺寸 / 配色（用户 2026-10-06：颜色、大小、布局都要能自定义）───────────────
+    //    原来这些是 `const` ✗ 改不了；现在收进 `DetailPopupStyle` ✓
+    //    · 代码里改：`DetailPopup.SetStyle(new DetailPopupStyle { ... })` ✓
+    //    · 游戏内改：配置块「详情框」（字号倍率 / 留白 / 最小尺寸 / 边框粗细 / 配色 / 对齐）✓
+
+    /// <summary>详情框外观与布局。</summary>
+    public struct DetailPopupStyle
+    {
+        /// <summary>内容填充色（用户要求：**淡灰** ✓）</summary>
+        public UColor Fill;
+        /// <summary>边框色（用户要求：**淡黑** ✓）</summary>
+        public UColor Border;
+        /// <summary>文字色（淡灰底上必须用深色字，否则看不清 ✗）</summary>
+        public UColor Text;
+
+        public float BorderThickness;   // 边框粗细
+        public float PadX;              // 文字左右留白
+        public float PadY;              // 文字上下留白
+        public float MinWidth;          // 最小宽（0 = 不限制）
+        public float MinHeight;         // 最小高（0 = 不限制）
+        /// <summary>换行宽度（&gt;0 = 超过就换行、框高跟着变 ✓；0 = 单行不换行）</summary>
+        public float MaxWidth;
+        public float FontScale;         // 字号 = 锚点那一行的字号 × 本值
+        public float ZOffset;           // 相对锚点的 z 偏移（负数 = 更靠前）
+        public float BoldOutlineWidth;  // 加粗强度（越小越干净 ✓）
+
+        /// <summary>对齐方式（影响多行时的排版 ✓）</summary>
+        public TextAlignmentOptions Align;
+
+        /// <summary>
+        /// 默认样式：**只用中间填充 + 白字、不要边框**（用户 2026-10-06 看图后指定 ✓）。
+        /// 填充色同时是那张材质图的**着色**（Unity 里 sprite color 是相乘 ✓）——
+        /// 选这个深灰是为了"材质读不到时"也还能看清白字 ✓
+        /// </summary>
+        public static DetailPopupStyle Default => new DetailPopupStyle
+        {
+            Fill = new UColor(0.14f, 0.14f, 0.14f, 1f),         // 深灰（同时充当材质着色 ✓）
+            Border = new UColor(0f, 0f, 0f, 0f),                // 边框：**不用** ✓
+            Text = new UColor(1f, 1f, 1f, 1f),                  // ★ 白字 ✓
+
+            BorderThickness = 0f,                               // ★ 0 = 不画那 4 条细条 ✓
+            PadX = 0.20f,
+            PadY = 0.12f,
+            MinWidth = 0.30f,
+            MinHeight = 0.20f,
+            MaxWidth = 0f,
+            FontScale = 1.0f,
+            ZOffset = -1.0f,
+            BoldOutlineWidth = 0.06f,
+            Align = TextAlignmentOptions.Center,
+        };
+
+        /// <summary>Nebula 观感（深灰黑底、不透明 ✓）—— 抄自 `NebulaManager.MouseOverPopup` 的
+        /// `background.color = new Color(0.14f, 0.14f, 0.14f, 1f)` ✓</summary>
+        public static DetailPopupStyle NebulaDark => new DetailPopupStyle
+        {
+            Fill = new UColor(0.14f, 0.14f, 0.14f, 1f),          // Nebula 的底色 ✓
+            Border = new UColor(0.14f, 0.14f, 0.14f, 1f),        // 同色 = 看起来无边（Nebula 就是一块底图 ✓）
+            Text = new UColor(1f, 1f, 1f, 1f),
+            BorderThickness = 0f,
+            PadX = 0.20f,
+            PadY = 0.12f,
+            MinWidth = 0.30f,
+            MinHeight = 0.20f,
+            MaxWidth = 0f,
+            FontScale = 1.0f,
+            ZOffset = -1.0f,
+            BoldOutlineWidth = 0.06f,
+            Align = TextAlignmentOptions.Left,
+        };
+
+        /// <summary>旧样式（深灰底 + 淡金边框 + 辉光白字）</summary>
+        public static DetailPopupStyle Classic => new DetailPopupStyle
+        {
+            Fill = new UColor(0.22f, 0.22f, 0.22f, 0.85f),
+            Border = new UColor(1f, 0.90f, 0.63f, 0.95f),
+            Text = new UColor(1f, 0.95f, 0.85f, 1f),
+            BorderThickness = 0.020f,
+            PadX = 0.20f,
+            PadY = 0.12f,
+            MinWidth = 0.30f,
+            MinHeight = 0.20f,
+            MaxWidth = 0f,
+            FontScale = 1.0f,
+            ZOffset = -1.0f,
+            BoldOutlineWidth = 0.06f,
+            Align = TextAlignmentOptions.Center,
+        };
+    }
+
+    /// <summary>当前样式（代码可通过 <see cref="SetStyle"/> 覆盖；游戏内由配置块调整 ✓）</summary>
+    public static DetailPopupStyle Style { get; private set; } = DetailPopupStyle.Default;
+
+    /// <summary>代码里设置样式（会立刻应用到已建的框 ✓）</summary>
+    public static void SetStyle(DetailPopupStyle style)
+    {
+        Style = style;
+        ApplyStyleToExisting();
+    }
+
+    /// <summary>回到默认样式（淡灰 + 淡黑 ✓）</summary>
+    public static void ResetStyle() => SetStyle(DetailPopupStyle.Default);
+
+    /// <summary>
+    /// **从配置读一遍样式**（配置块「详情框」✓）—— 每次 <see cref="Show"/> 都会调，
+    /// 所以游戏里改完立刻生效 ✓（配置是字典查找，开销可忽略 ✓）
+    /// </summary>
+    public static void ApplyConfig()
+    {
+        try
+        {
+            // ⚠️ `ConfigRegistry` 是**静态类**，不能赋给变量 ✗（编译期就报 CS0119/CS0723）
+            static float F(string key, float fallback)
+            {
+                try { return LightInDark.Configuration.ConfigRegistry.Get(key)?.GetFloat() ?? fallback; }
+                catch { return fallback; }
+            }
+            static int I(string key, int fallback)
+            {
+                try { return LightInDark.Configuration.ConfigRegistry.Get(key)?.GetInt() ?? fallback; }
+                catch { return fallback; }
+            }
+
+            int palette = I("lid.detail.palette", 0);
+            var s = palette switch
+            {
+                1 => DetailPopupStyle.Classic,      // 深灰 + 淡金（旧观感）
+                2 => CardStyle(),                   // 白卡 + 深边
+                3 => DetailPopupStyle.NebulaDark,   // ★ Nebula 观感（深灰黑纯色底 ✓）
+                _ => DetailPopupStyle.Default,      // 淡灰 + 淡黑（默认 ✓）
+            };
+
+            s.FontScale = F("lid.detail.fontScale", s.FontScale);
+            s.PadX = F("lid.detail.padX", s.PadX);
+            s.PadY = F("lid.detail.padY", s.PadY);
+            s.MinWidth = F("lid.detail.minWidth", s.MinWidth);
+            s.MinHeight = F("lid.detail.minHeight", s.MinHeight);
+            s.MaxWidth = F("lid.detail.maxWidth", s.MaxWidth);
+            s.BorderThickness = F("lid.detail.borderThickness", s.BorderThickness);
+
+            s.Align = I("lid.detail.align", 0) switch
+            {
+                1 => TextAlignmentOptions.Left,
+                2 => TextAlignmentOptions.Right,
+                _ => TextAlignmentOptions.Center,
+            };
+
+            // 只在真的变了才写回（避免每帧重建/刷日志 ✓）
+            if (!StyleEquals(Style, s))
+            {
+                Style = s;
+                ApplyStyleToExisting();
+                LightLogger.Log($"[DetailPopup] 样式已更新（配色={palette} 字号×{s.FontScale:0.##} " +
+                                $"留白={s.PadX:0.##}/{s.PadY:0.##} 边框={s.BorderThickness:0.###} 对齐={s.Align}）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.ApplyConfig] {ex.Message}");
+        }
+    }
+
+    /// <summary>白卡配色（配置档位 2）✓</summary>
+    private static DetailPopupStyle CardStyle()
+    {
+        var s = DetailPopupStyle.Default;
+        s.Fill = new UColor(0.97f, 0.97f, 0.97f, 0.96f);
+        s.Border = new UColor(0.15f, 0.15f, 0.15f, 0.95f);
+        s.Text = new UColor(0.05f, 0.05f, 0.05f, 1f);
+        return s;
+    }
+
+    private static bool StyleEquals(DetailPopupStyle a, DetailPopupStyle b)
+        => a.Fill == b.Fill && a.Border == b.Border && a.Text == b.Text
+           && a.BorderThickness == b.BorderThickness && a.PadX == b.PadX && a.PadY == b.PadY
+           && a.MinWidth == b.MinWidth && a.MinHeight == b.MinHeight && a.MaxWidth == b.MaxWidth
+           && a.FontScale == b.FontScale && a.ZOffset == b.ZOffset
+           && a.BoldOutlineWidth == b.BoldOutlineWidth && a.Align == b.Align;
+
+    /// <summary>上次应用的换行宽度（变了才重排文字 ✓）</summary>
+    private static float _lastWrapWidth = -1f;
+
+    /// <summary>上一次实测的框宽（跟随鼠标定位要用 ✓，见 `FitBox` 里的赋值）</summary>
+    private static float _boxWidth = 0.3f;
+
+    /// <summary>
+    /// 把鼠标屏幕坐标换算到**本框父物体**的局部坐标 ✓（抄 Nebula `MouseOverPopup` 的做法：
+    /// 它 `ScreenToWorldPoint` 之后直接用世界坐标定位 ✓）
+    /// 取不到相机/父物体时返回 false → 调用方退回"挂在行下面"的老写法 ✓
+    /// </summary>
+    private static bool TryFollowMouse(Transform? anchor, out Vector3 localPos)
+    {
+        localPos = Vector3.zero;
+        try
+        {
+            if (_parent == null) return false;
+
+            // 用画这个框的相机来换算（按 layer 的 cullingMask 找 ✓，AGENTS §4.3）
+            int layerBit = 1 << (_root != null ? _root.layer : 5);
+            Camera? cam = null;
+            foreach (var c in Camera.allCameras)
+            {
+                if (c == null) continue;
+                if ((c.cullingMask & layerBit) == 0) continue;
+                if (cam == null || c.depth > cam.depth) cam = c;
+            }
+            if (cam == null) cam = Camera.main;
+            if (cam == null) return false;
+
+            float z = Mathf.Abs(cam.transform.position.z);
+            if (z < 0.01f) z = 10f;
+            var world = cam.ScreenToWorldPoint(new Vector3(Input.mousePosition.x, Input.mousePosition.y, z));
+
+            localPos = _parent.InverseTransformPoint(world);
+            // z 沿用"锚点行的 z"（已被证明能显示的深度 ✓，前后交给 sortingOrder ✓）
+            localPos.z = anchor != null ? anchor.localPosition.z : localPos.z;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.TryFollowMouse] {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 给 TMP 一个**受限的 rect 宽度**，否则 `enableWordWrapping` 是空转（TMP 不会换行 ✗）。
+    /// `MaxWidth &lt;= 0` 时不限制（保持"单行、按字形算宽"的老行为 ✓）
+    /// </summary>
+    private static void ApplyWrapWidth()
+    {
+        try
+        {
+            if (_text == null) return;
+            var rect = _text.rectTransform;
+            if (rect == null) return;
+
+            if (Style.MaxWidth > 0f)
+            {
+                rect.sizeDelta = new Vector2(Style.MaxWidth, rect.sizeDelta.y);
+                _text.enableWordWrapping = true;
+            }
+            else
+            {
+                _text.enableWordWrapping = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.ApplyWrapWidth] {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 从**嵌入资源**载入一张**九宫格**图（`border` = 四边不拉伸的像素数 ✓）。
+    /// ⚠️ 不能用 `ResourceHelper.LoadSpriteFromResource`（它不设 `Sprite.border` ✗）
+    ///    —— 没有 border，`SpriteDrawMode.Sliced` 就会把整张图当普通图拉伸，边框糊掉 ✗
+    /// </summary>
+    private static Sprite? LoadSlicedSprite(string resourceName, float pixelsPerUnit, float border)
+    {
+        try
+        {
+            var asm = typeof(DetailPopup).Assembly;
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null)
+            {
+                LightLogger.LogWarning($"[DetailPopup] 找不到嵌入资源 {resourceName}");
+                return null;
+            }
+
+            var bytes = new byte[stream.Length];
+            _ = stream.Read(bytes, 0, bytes.Length);
+
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!tex.LoadImage(bytes)) { LightLogger.LogWarning($"[DetailPopup] 解码失败 {resourceName}"); return null; }
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+
+            var rect = new Rect(0f, 0f, tex.width, tex.height);
+            var b = new Vector4(border, border, border, border);
+            return Sprite.Create(tex, rect, new Vector2(0.5f, 0.5f), pixelsPerUnit, 0, SpriteMeshType.FullRect, b);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.LoadSlicedSprite] {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 取**被参考行所在的世界 z**（AGENTS §4.3.2："z 直接用被参考行的 z，别猜方向" ✓）。
+    /// 找不到参考渲染器时退回传入的 fallback ✓
+    /// </summary>
+    private static float GetReferenceWorldZ(Transform? anchor, float fallback)
+    {
+        try
+        {
+            var reference = FindReferenceRenderer(anchor);
+            if (reference != null) return reference.transform.position.z;
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.GetReferenceWorldZ] {ex.Message}");
+        }
+        return fallback;
+    }
+
+    /// <summary>找渲染这个父物体所在层的 **UI 相机**（按 layer 的 cullingMask 判定 ✓，AGENTS §4.3）</summary>
+    private static Camera? FindUiCameraFor(Transform parent)
+    {
+        try
+        {
+            int layerBit = 1 << parent.gameObject.layer;
+            Camera? best = null;
+            foreach (var cam in Camera.allCameras)
+            {
+                if (cam == null) continue;
+                if ((cam.cullingMask & layerBit) == 0) continue;
+                if (best == null || cam.depth > best.depth) best = cam;   // 取 depth 最大的那台（UI 相机 ✓）
+            }
+            return best;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>把当前样式写回已建出来的渲染器/文字（颜色、字号、加粗强度）✓</summary>
+    private static void ApplyStyleToExisting()
+    {
+        try
+        {
+            if (_fill != null) _fill.color = Style.Fill;
+            if (_top != null) _top.color = Style.Border;
+            if (_bottom != null) _bottom.color = Style.Border;
+            if (_left != null) _left.color = Style.Border;
+            if (_right != null) _right.color = Style.Border;
+
+            if (_text != null)
+            {
+                _text.color = Style.Text;
+                _text.alignment = Style.Align;
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.ApplyStyle] {ex.Message}");
+        }
+    }
 
     private static GameObject? _root;
     private static Transform? _parent;
     private static TextMeshPro? _text;
     private static Sprite? _fallbackWhite;                            // 自建 1×1 白图（自己持有，不会被场景切换带走）
     private static SpriteRenderer? _fill;
+    /// <summary>
+    /// 九宫格边框图（复制自 Nebula `NebulaPluginNova\Resources\GUI\Background_Frame.png` ✓，
+    /// 内填充是 `Background_Inner.png` ✓）—— 用户 2026-10-06："那个材质，你复制一下呢" ✓
+    /// </summary>
+    private static SpriteRenderer? _frame;
+    private static Sprite? _frameSprite;
+    private static Sprite? _innerSprite;
     private static SpriteRenderer? _top;
     private static SpriteRenderer? _bottom;
     private static SpriteRenderer? _left;
     private static SpriteRenderer? _right;
 
-    private static float _boxHeight = BoxMinHeight;                   // 当前框高（把框挂在行的下面用）
+    private static float _boxHeight = 0.20f;                   // 当前框高（把框挂在行的下面用）
     private static float _loggedW = -1f;                              // 上次记录的框宽/高（只在变化时打日志）
     private static float _loggedH = -1f;
     private static bool _showing;                                     // 鼠标当前停在带 detail 的行上
@@ -83,28 +429,82 @@ public static class DetailPopup
             //    那样 SpriteRenderer 的 sprite 为空 → 框和背景整个不渲染（只有 TMP 文字还在）。
             RefreshPartSprites();
 
+            // ①' 从配置读一遍样式（配色/字号/留白/尺寸/边框/对齐）—— 游戏里改完立刻生效 ✓
+            ApplyConfig();
+
             // ② 渲染设置：GameObject.layer（相机 cullingMask）+ sortingLayer/Order 都跟着行走
             ApplyRenderSettings(anchor);
 
             string body = text!.Trim();
             if (canPinByTab) body += PinHint;              // ← 可按 Tab 固定时，空一行补提示
 
-            if (_currentText != body)
+            // ★ 换行宽度：开了 `MaxWidth` 才给 TMP 一个受限的 rect 宽度（否则 TMP 不会换行 ✗）
+            ApplyWrapWidth();
+
+            if (_currentText != body || _lastWrapWidth != Style.MaxWidth)
             {
                 _text.text = body;
-                _text.ForceMeshUpdate();
+
+                // ⚠️⚠️ 2026-10-06 用户报「鼠标从 A 移到 B，框的大小还是 A 的，再放一次才对」——
+                //    根因：`Ensure()` 里 `_root.SetActive(false)` ✓，而这里是**先 FitBox 再 SetActive(true)** ✗
+                //    → `ForceMeshUpdate()` 在**未激活**的对象上**不生效** ✗
+                //      → `textBounds` 还是**上一次**那份 → 框尺寸慢一拍 ✓✓
+                //    TMP 的第一个参数就是治这个的：`ignoreActiveState = true` ✓
+                //    （第二个 `forceTextReparsing = true` 保证这次一定重排 ✓）
+                _text.ForceMeshUpdate(true, true);
+
                 _currentText = body;
+                _lastWrapWidth = Style.MaxWidth;
             }
             FitBox();
 
-            // 挂在被悬浮行的下面；按实际框高定位，框小就贴得近
-            Vector3 pos = anchor != null ? anchor.localPosition : Vector3.zero;
-            pos.y -= _boxHeight * 0.5f + 0.10f;
+            // ⚠️ 用户报「复盘按钮和设置按钮重叠」那次同款坑：位置会被原版布局组件每帧算回去 ✗
+            //    （这里是**我们自己的**位置计算，所以只需按 Nebula 的做法**跟随鼠标**即可 ✓）
+            //    抄 Nebula `MouseOverPopup`（`NebulaManager.cs:133-137`）：
+            //      鼠标在**右半屏** → 框摆到光标左侧；在**下半屏** → 框摆到光标上方（自动避让边缘 ✓）
+            Vector3 pos;
+            if (TryFollowMouse(anchor, out var mousePos))
+            {
+                // ★★ 照搬 Nebula `MouseOverPopup`（`NebulaManager.cs:133-155`）：
+                //    ① 按鼠标所在**象限**决定把框摆到哪一侧（`isLeft/isLower` ✓）
+                //    ② 位置 = 光标位置 − **对角锚点** → 框整个落在光标"反方向"那一侧 ✓
+                //    ③ 再夹进屏幕内（Nebula 的四边修正 ✓）
+                bool mouseOnLeft = Input.mousePosition.x < Screen.width * 0.5f;
+                bool mouseOnLower = Input.mousePosition.y < Screen.height * 0.5f;
+
+                float boxW = Mathf.Max(Style.MinWidth, _boxWidth);
+                float boxH = Mathf.Max(Style.MinHeight, _boxHeight);
+
+                const float gap = 0.15f;      // Nebula 的 0.15 ✓
+                // 锚点 = 框的"靠近光标的那条边"（鼠标在左 → 框摆在光标右侧 → 锚点取左边界 ✓）
+                float anchorX = mouseOnLeft ? -boxW * 0.5f - gap : boxW * 0.5f + gap;
+                float anchorY = mouseOnLower ? boxH * 0.5f + gap : -boxH * 0.5f - gap;
+
+                pos = mousePos + new Vector3(anchorX, anchorY, 0f);
+            }
+            else
+            {
+                // 拿不到鼠标空间时退回老写法（挂在被悬浮行下面 ✓）
+                pos = anchor != null ? anchor.localPosition : Vector3.zero;
+                pos.y -= _boxHeight * 0.5f + 0.10f;
+            }
+
             pos.x = Mathf.Clamp(pos.x, -2.2f, 2.2f);       // 简单夹紧，别跑出面板
             pos.y = Mathf.Clamp(pos.y, -2.4f, 2.4f);
-            // z 直接用"行自己的 z"：那是已被证明能显示出来的深度，
-            // 免得在大厅里猜错方向被面板/相机裁掉（前后关系交给 sortingOrder，见 ApplySorting）
+
             _root.transform.localPosition = pos;
+
+            // ⚠️⚠️ 2026-10-06 用户报「层级还是有问题」—— 日志实证根因在 **z**，不在排序号 ✗：
+            //     [诊断] 参考行 : sorting=0(Default)/0    world=(…, …, **-910.00**)
+            //     [诊断] 框-底  : sorting=0(Default)/2000 world=(…, …,     **0.00**)
+            //   挂到 UI 相机下之后位置是 `ScreenToWorldPoint` 算出来的 → z 变成 0 ✗，
+            //   而设置菜单整体在 z = -910 ✓ → 前后关系完全错位 ✓
+            //   ★ AGENTS §4.3.2 的规矩正是治这个的：
+            //     "**z 直接用被参考行的 z**，前后关系交给 sortingOrder，**别猜方向**" ✓
+            //   → 把框搬到"行自己的 z 再往前 5"（往前一点，保证不被同一排序层的邻居压住 ✓）
+            float refZ = GetReferenceWorldZ(anchor, _root.transform.position.z);
+            var wp = _root.transform.position;
+            _root.transform.position = new Vector3(wp.x, wp.y, refZ - 5f);
 
             _showing = true;
             _pinned = false;                               // 每次悬停都是"未固定"状态
@@ -173,19 +573,39 @@ public static class DetailPopup
 
         _parent = parent;
         _root = new GameObject("LightDetailPopup");
-        _root.transform.SetParent(parent);
+
+        // ★★ 照搬 Nebula `MouseOverPopup.Awake/SetWidgetOld`（`NebulaManager.cs:131`）：
+        //    `transform.SetParent(FindCamera(uiLayer).transform)` —— **挂到 UI 相机下面** ✓
+        //    为什么必须这样：挂在被悬浮那一行的父物体下时，原版布局组件（`AspectPosition` 等）
+        //    会**每帧**把位置算回去（AGENTS §4.4）→ 框"跟不动/位置乱跳" ✗
+        //    （用户 2026-10-06 报的按钮重叠就是同一个坑 ✓）
+        var cam = FindUiCameraFor(parent);
+        if (cam != null) _root.transform.SetParent(cam.transform, false);
+        else _root.transform.SetParent(parent);            // 找不到相机就退回原父物体 ✓
+
         _root.transform.localScale = Vector3.one;
 
         var white = GetWhiteSprite();
 
         // 半透明灰底
-        _fill = MakePart("Fill", Vector3.zero, FillColor, white);
+        _fill = MakePart("Fill", Vector3.zero, Style.Fill, white);
+
+        // ★ 复制来的 Nebula 材质：**只用中间填充图** ✓
+        //   用户 2026-10-06 看图后明确要求："改成白字，把边框扔掉，只要中间填充物" ✓
+        //   → 边框（`DetailFrame` 那张九宫格 + 4 条细条）**一律不用** ✗
+        _innerSprite = LoadSlicedSprite("Light.Resources.UI.DetailInner.png", 100f, 8);
+        if (_innerSprite != null && _fill != null)
+        {
+            _fill.sprite = _innerSprite;
+            _fill.drawMode = SpriteDrawMode.Sliced;
+        }
+        HidePart(_frame);   // 边框不要 ✓
 
         // 淡金细边框（四条细条；z 略小 = 更靠前）
-        _top = MakePart("BorderTop", Vector3.zero, BorderColor, white);
-        _bottom = MakePart("BorderBottom", Vector3.zero, BorderColor, white);
-        _left = MakePart("BorderLeft", Vector3.zero, BorderColor, white);
-        _right = MakePart("BorderRight", Vector3.zero, BorderColor, white);
+        _top = MakePart("BorderTop", Vector3.zero, Style.Border, white);
+        _bottom = MakePart("BorderBottom", Vector3.zero, Style.Border, white);
+        _left = MakePart("BorderLeft", Vector3.zero, Style.Border, white);
+        _right = MakePart("BorderRight", Vector3.zero, Style.Border, white);
 
         // 文字：优先克隆 anchor（那一行）自己的文字，字号/字体/缩放就和那一行完全一致
         _text = CreateText(_root.transform, anchor);
@@ -212,12 +632,12 @@ public static class DetailPopup
                 clone.text = "";
 
                 clone.enableAutoSizing = false;                    // 必须关：否则改 fontSize 不生效
-                clone.fontSize = source.fontSize * SizeScale;      // 比那一行文字再大一点
-                clone.alignment = TextAlignmentOptions.Center;
-                clone.enableWordWrapping = false;                  // 不换行：宽高由我们按字形算
+                clone.fontSize = source.fontSize * Style.FontScale;      // 比那一行文字再大一点
+                clone.alignment = Style.Align;
+                clone.enableWordWrapping = Style.MaxWidth > 0f;                  // 不换行：宽高由我们按字形算
                 clone.overflowMode = TextOverflowModes.Overflow;   // 别被原版省略号截断
                 clone.raycastTarget = false;
-                clone.color = TextColor;
+                clone.color = Style.Text;
 
                 var tr = clone.GetComponent<TextTranslatorTMP>();
                 if (tr != null) tr.enabled = false;                // 别让翻译器改写我们的文本
@@ -233,7 +653,7 @@ public static class DetailPopup
         }
 
         // ② 退回统一文本模板（主界面字体 + 辉光白）
-        var fallback = MenuTextTemplate.Create(parent, Vector3.zero, "", FallbackFontSize * SizeScale, TextColor);
+        var fallback = MenuTextTemplate.Create(parent, Vector3.zero, "", FallbackFontSize * Style.FontScale, Style.Text);
         ApplyBold(fallback);
         return fallback;
     }
@@ -252,8 +672,8 @@ public static class DetailPopup
             var mat = tmp.fontMaterial;
             if (mat == null) return;
 
-            mat.SetFloat("_OutlineWidth", BoldOutlineWidth);
-            mat.SetColor("_OutlineColor", TextColor);
+            mat.SetFloat("_OutlineWidth", Style.BoldOutlineWidth);
+            mat.SetColor("_OutlineColor", Style.Text);
             mat.SetFloat("_OutlineSoftness", 0f);      // 必须为 0：柔化会把笔画糊开（"糊"的元凶）
         }
         catch (Exception ex)
@@ -356,7 +776,9 @@ public static class DetailPopup
     {
         try
         {
-            const int margin = 10;
+            // ⚠️ 用户 2026-10-06 报「层级」：框被选项行**盖住**了 ✗ —— 原来只比那一行高 10 不够 ✓
+            //    直接抬到 +2000：提示框本来就该盖住菜单里的一切 ✓（Nebula 也是把弹窗放到很前面 ✓）
+            const int margin = 2000;
 
             int layerId = 0;              // sorting layer
             int order = 0;
@@ -538,8 +960,9 @@ public static class DetailPopup
                 catch { }
             }
 
-            float width = Mathf.Max(BoxMinWidth, glyphW + PadX * 2f);
-            float height = Mathf.Max(BoxMinHeight, glyphH + PadY * 2f);
+            float width = Mathf.Max(Style.MinWidth, glyphW + Style.PadX * 2f);
+            _boxWidth = width;   // ★ 记下实测宽度（跟随鼠标定位要用 ✓）
+            float height = Mathf.Max(Style.MinHeight, glyphH + Style.PadY * 2f);
             _boxHeight = height;
 
             // 只在尺寸变化时记一行，方便排查"框大/字小"
@@ -555,7 +978,7 @@ public static class DetailPopup
 
             float halfW = width * 0.5f;
             float halfH = height * 0.5f;
-            float t = BorderThickness;
+            float t = Style.BorderThickness;
 
             if (_fill != null)
             {
@@ -563,15 +986,33 @@ public static class DetailPopup
                 _fill.size = new Vector2(width, height);
             }
 
-            Set(_top, new Vector3(0f, halfH - t * 0.5f, -0.01f), new Vector2(width, t));
-            Set(_bottom, new Vector3(0f, -halfH + t * 0.5f, -0.01f), new Vector2(width, t));
-            Set(_left, new Vector3(-halfW + t * 0.5f, 0f, -0.01f), new Vector2(t, height));
-            Set(_right, new Vector3(halfW - t * 0.5f, 0f, -0.01f), new Vector2(t, height));
+            // ★★ 照搬 Nebula `MouseOverPopup` 的做法：
+            //    背景 = **一整块 Sliced 底图**（`background.size = 内容尺寸 + 0.22/0.1` ✓
+            //      —— `NebulaManager.cs:183` 的 `UpdateArea` 就是这个 ✓）
+            //    我们原来是"填充 + 4 条边框"四个渲染器 ✗ → 现在：
+            //      · 填充就是整块底（Sliced 拉伸 ✓，AGENTS §4.3.3 同款）
+            //      · 4 条边框只在 `BorderThickness > 0` 时才画（Nebula 那档是 0 = 无边 ✓）
+            Set(_fill, Vector3.zero, new Vector2(width, height));
+            if (_fill != null)
+            {
+                _fill.drawMode = SpriteDrawMode.Sliced;
+                _fill.tileMode = SpriteTileMode.Continuous;
+            }
+
+            // ★ 边框一律不画（用户 2026-10-06："把边框扔掉，只要中间填充物" ✓）
+            HidePart(_frame);
+            HidePart(_top); HidePart(_bottom); HidePart(_left); HidePart(_right);
         }
         catch (Exception ex)
         {
             LightLogger.LogWarning($"[DetailPopup.FitBox] {ex.Message}");
         }
+    }
+
+    /// <summary>隐藏一条边框（`BorderThickness = 0` 时用 ✓）</summary>
+    private static void HidePart(SpriteRenderer? sr)
+    {
+        try { if (sr != null && sr.gameObject.activeSelf) sr.gameObject.SetActive(false); } catch { }
     }
 
     private static void Set(SpriteRenderer? sr, Vector3 localPos, Vector2 size)

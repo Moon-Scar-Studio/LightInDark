@@ -84,7 +84,25 @@ namespace LightInDark.UI.Ability
                     return;
                 }
 
+                // ⚠️⚠️ 2026-10-06 用户报「按钮可以点两次」——根因就在这里：
+                //   本方法**覆写了基类的 HandleClick，却把基类那三道闸全丢了** ✗
+                //   ① `ShouldBeUsable`（可用性重算）② `CanInteract()` ③ **`_lastClickFrame` 同帧去重**
+                //   其中 ③ 最要命：原版 `PassiveButton.OnClick` 与我们自己的鼠标半径判定
+                //   **会在同一帧各触发一次** → 第一次"放技能"、第二次（同一帧）命中上面那条
+                //   `AllowCancelByReclick` → **立刻把效果取消了** ✗
+                //   → 表现就是用户说的"点一下进了 CD，但什么都没发生 / 还能再点一次" ✓
+                if (!ShouldBeUsable) return;
+
+                var action = Button;
+                if (action != null && !action.CanInteract()) return;
+
+                if (_lastClickFrame == Time.frameCount) return;   // ★ 同帧去重（与基类同一套）
+                _lastClickFrame = Time.frameCount;
+
+                // 效果中（且不允许重击取消）→ 仍然不能重复放技能 ✓
+                // （`ShouldBeUsable` 在效果中**恒为 true**（为了允许取消 ✓），所以这里必须再拦一道 ✓）
                 if (_inCooldown) return;
+
                 if (!_config.CanUse()) return;
                 if (HasLimitedUses && _usesLeft <= 0) return;
 
@@ -190,16 +208,16 @@ namespace LightInDark.UI.Ability
                     return;
                 }
 
-                UpdateVisibility();
-                UpdateUsability();
-                UpdateCooldownDisplay();     // ★ 效果期间也要刷新进度环（见下面的覆写）
-
-                // ⚠️⚠️ §4.4「两边打架」：`base.UpdateUsability()` → `ActionButton.SetEnabled()`
-                //    会写 `buttonLabelText.color`（原版行为）→ **把 StartEffect 里设的绿色冲掉**，
-                //    于是"效果进行中"的绿色提示永远看不到（用户看到的是按钮文字莫名其妙不变色）✗
-                //    这里在可用性刷新之后**补一次颜色**，保证绿色由我们说了算。
-                if (_inEffect && ShowEffectCountdown && EffectLabel != null)
-                    _actionButton.buttonLabelText.color = EffectColor;
+                // ★ 第 4 批：效果期间也走**统一的 UI 刷新出口** ——
+                //   绿色提示的补色逻辑已经并进 `Refresh()` 覆写里 ✓（原来是散在这里的 ✗）
+                //
+                // ★★ 2026-10-06 用户报「点击后进入 CD，但 **CD 不转**」——
+                //    根因就是这里：效果分支原来**完全不推冷却** ✗
+                //    → 持续型效果（`EffectDuration <= 0`，例如"一直开着"的技能）
+                //      期间 CD 永远停在原地，点击还能再触发一次 ✗✗
+                //    修法：效果期间**照常推进冷却** ✓（Nebula 里效果与冷却也是同一条计时链 ✓）
+                TickCooldown();
+                Refresh();
 
                 UpdateHotkey();
             }
@@ -207,6 +225,23 @@ namespace LightInDark.UI.Ability
             {
                 LightLogger.LogWarning($"[EffectButton.Update] {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 效果期间的统一刷新：先让基类刷新（显示/可用性/进度环/闪白），
+        /// **再补一次绿色** ✓
+        ///
+        /// ⚠️⚠️ §4.4「两边打架」：`base.Refresh()` → `UpdateUsability()` → `ActionButton.SetEnabled()`
+        ///    会写 `buttonLabelText.color`（原版行为）→ **把 StartEffect 里设的绿色冲掉**，
+        ///    于是"效果进行中"的绿色提示永远看不到（表现：按钮文字莫名其妙不变色）✗
+        ///    所以必须在**可用性刷新之后**写 —— 放在覆写里，从此不会再有人漏掉这一步 ✓
+        /// </summary>
+        protected override void Refresh()
+        {
+            base.Refresh();
+
+            if (_inEffect && ShowEffectCountdown && EffectLabel != null)
+                _actionButton.buttonLabelText.color = EffectColor;
         }
 
         /// <summary>

@@ -59,12 +59,15 @@ public class StandardRoleAllocator : IRoleAllocator
             int usedCrew = AssignPinned(table, others, RoleCategory.Crewmate, MaxCrewmateRoles);
 
             // 内鬼 → 中立 → 船员，依次抽选自定义职业（扣除预定已用名额）
-            Roll(table, impostors, BuildPool(RoleCategory.Impostor), MaxImpostorRoles, usedImp);
+            // ★ 审查 B7 下半：传入**下限**（`lid.assignment.*Min`，默认 0 = 不改变现状 ✓）
+            Roll(table, impostors, BuildPool(RoleCategory.Impostor), MaxImpostorRoles, usedImp,
+                 GetCap("lid.assignment.impostorMin", 0));
 
-            AssignNeutrals(table, others, usedNeu);
+            AssignNeutrals(table, others, usedNeu, GetCap("lid.assignment.neutralMin", 0));
 
             var crew = others.Where(p => !table.HasRole(p)).ToList();
-            Roll(table, crew, BuildPool(RoleCategory.Crewmate), MaxCrewmateRoles, usedCrew);
+            Roll(table, crew, BuildPool(RoleCategory.Crewmate), MaxCrewmateRoles, usedCrew,
+                 GetCap("lid.assignment.crewmateMin", 0));
 
             // 兜底：未分配自定义职业的玩家给普通职业模板（内鬼→普通内鬼，其他→普通船员）
             foreach (var pid in impostors)
@@ -146,10 +149,14 @@ public class StandardRoleAllocator : IRoleAllocator
     /// 独立的中立分配：从中立池里按概率挑 1 个中立职业，随机安到一名尚未分配的非内鬼身上。
     /// 中立不与船员共用抽选流程，被中立选走的人立刻从船员候选里剔除。
     /// </summary>
-    private void AssignNeutrals(RoleTable table, List<byte> others, int preAssigned)
+    private void AssignNeutrals(RoleTable table, List<byte> others, int preAssigned, int globalMin = 0)
     {
         int slots = MaxNeutralRoles - preAssigned;
-        if (slots <= 0) return;
+        if (slots <= 0)
+        {
+            WarnIfBelowMin(globalMin, preAssigned, "中立名额已被预定占满");
+            return;
+        }
 
         var pool = BuildPool(RoleCategory.Neutral);
         if (pool.Count == 0) return;
@@ -179,6 +186,28 @@ public class StandardRoleAllocator : IRoleAllocator
             picked.Remaining--;                // 记名额：为 0 时 PickOne 会把它剔出池
             assigned++;
         }
+
+        // ★ 下限轮（审查 B7 下半）：中立也要保证"至少出 N 个"✓（默认 0 = 什么都不做 ✓）
+        while (assigned < globalMin && assigned < slots)
+        {
+            var forced = PickForced(entries);
+            if (forced == null) break;
+
+            // ⚠️ 不能写 `FirstOrDefault` 再判 0 —— PlayerId 0 是**合法玩家**，会和"找不到"混淆 ✗
+            byte? pid = null;
+            foreach (var p in candidates)
+            {
+                if (!table.HasRole(p)) { pid = p; break; }
+            }
+            if (pid == null) break;                        // 没有候选玩家了
+
+            table.SetRole(pid.Value, forced.Role);
+            forced.Remaining--;
+            assigned++;
+            LightLogger.Log($"[StandardRoleAllocator] 中立下限补发：{forced.Role.Name}({forced.Role.CodeName})");
+        }
+
+        WarnIfBelowMin(globalMin, assigned, "中立名额/候选玩家不够");
     }
 
     /// <summary>
@@ -212,14 +241,23 @@ public class StandardRoleAllocator : IRoleAllocator
     ///   ④ **候选里含已有职业的玩家** → `/up` 预定的职业会被后续类别抽选**覆盖**，
     ///      而预定早已被 `Consume` → 玩家两头空且无提示 ✗ → 现在只从"还没职业"的玩家里选。
     /// </summary>
-    private void Roll(RoleTable table, List<byte> players, List<RoleTemplate> pool, int globalMax, int preAssigned = 0)
+    private void Roll(RoleTable table, List<byte> players, List<RoleTemplate> pool, int globalMax,
+                      int preAssigned = 0, int globalMin = 0)
     {
         try
         {
-            if (pool.Count == 0 || players.Count == 0 || preAssigned >= globalMax) return;
+            if (pool.Count == 0 || players.Count == 0 || preAssigned >= globalMax)
+            {
+                WarnIfBelowMin(globalMin, preAssigned, "池为空或没有候选玩家");
+                return;
+            }
 
             var candidates = players.Where(p => !table.HasRole(p)).OrderBy(_ => Rng.Next()).ToList();
-            if (candidates.Count == 0) return;
+            if (candidates.Count == 0)
+            {
+                WarnIfBelowMin(globalMin, preAssigned, "没有还没职业的候选玩家");
+                return;
+            }
 
             var entries = new List<PoolEntry>();
             foreach (var role in pool)
@@ -228,7 +266,11 @@ public class StandardRoleAllocator : IRoleAllocator
                 if (max <= 0) continue;
                 entries.Add(new PoolEntry { Role = role, Remaining = max });
             }
-            if (entries.Count == 0) return;
+            if (entries.Count == 0)
+            {
+                WarnIfBelowMin(globalMin, preAssigned, "所有职业的名额都 <= 0");
+                return;
+            }
 
             int assigned = preAssigned;
 
@@ -255,10 +297,56 @@ public class StandardRoleAllocator : IRoleAllocator
                 picked.Remaining--;
                 assigned++;
             }
+
+            // ③ **下限轮**（审查 B7 下半）：概率没抽够时，保证至少发出 `globalMin` 个 ✓
+            //    语义：下限 = "本类别至少出这么多个自定义职业" ——
+            //      · 忽略概率（否则"概率 5%"的下限等于没设 ✓）
+            //      · 但仍受各职业 MaxCount 名额限制 ✓（名字额用完就换别的职业，全用完才少发 ✓）
+            //      · 默认 globalMin = 0 → 什么都不做 ✓（纯增量 ✓）
+            while (assigned < globalMin && candidates.Count > 0)
+            {
+                var forced = PickForced(entries);
+                if (forced == null) break;          // 池子名额全用完 → 只能少发（下面会 warning）
+                table.SetRole(candidates[0], forced.Role);
+                candidates.RemoveAt(0);
+                forced.Remaining--;
+                assigned++;
+                LightLogger.Log($"[StandardRoleAllocator] 下限补发：{forced.Role.Name}({forced.Role.CodeName})");
+            }
+
+            WarnIfBelowMin(globalMin, assigned, "名额/候选玩家不够");
         }
         catch (Exception ex)
         {
             LightLogger.LogError("[StandardRoleAllocator.Roll]", ex);
+        }
+    }
+
+    /// <summary>下限没达成时打一条 warning（有下限配置才打，避免刷屏 ✓）。</summary>
+    private static void WarnIfBelowMin(int globalMin, int assigned, string why)
+    {
+        if (globalMin <= 0 || assigned >= globalMin) return;
+        LightLogger.LogWarning($"[StandardRoleAllocator] 下限 {globalMin} 未达成（只发了 {assigned} 个）：{why}");
+    }
+
+    /// <summary>
+    /// 下限轮专用：从**还有名额**的职业里等权随机挑一个（**不看概率** ✓）。
+    ///
+    /// ⚠️ 与 <see cref="PickOne"/> 的区别：`PickOne` 要"掷骰命中"（概率语义 ✓），
+    ///    这个只要求"还有名额"（下限语义 = 无论如何都要发出来 ✓）。
+    /// </summary>
+    private PoolEntry? PickForced(List<PoolEntry> entries)
+    {
+        try
+        {
+            entries.RemoveAll(e => e.Remaining <= 0);
+            if (entries.Count == 0) return null;
+            return entries[Rng.Next(entries.Count)];
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[StandardRoleAllocator.PickForced]", ex);
+            return null;
         }
     }
 

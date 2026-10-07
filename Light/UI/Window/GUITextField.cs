@@ -283,9 +283,34 @@ public class TextFieldBehaviour : MonoBehaviour
     /// <summary>是否允许输入法（中文）。</summary>
     public bool UseIME = true;
 
-    /// <summary>进入编辑前的全局 IME 模式（失焦时还原，避免影响原版聊天框的中文输入）。</summary>
-    private static IMECompositionMode _imeBefore = IMECompositionMode.Auto;
-    private static bool _imePushed;
+    /// <summary>
+    /// ⚠️⚠️⚠️ **原版自己就是这个全局值的所有者**（2026-10-06 读原版源码才看清）：
+    ///
+    /// <code>
+    /// TextBoxTMP.GiveFocus():  Input.imeCompositionMode = 1;   // On  —— 输入框拿到焦点 → 开启输入法
+    /// TextBoxTMP.LoseFocus():  Input.imeCompositionMode = 2;   // Off —— 输入框失去焦点 → 关闭输入法
+    /// </code>
+    ///
+    /// **所以 `Off` 是游戏的正常状态** ✓ —— 而本类原来那套
+    /// "聚焦时记住旧值 → 失焦时写回旧值"是**错的** ✗✗：
+    /// 它会把游戏刚设好的 `On` 覆盖成**上一次游戏设的 `Off`** ✗
+    /// → 表现就是用户报的「**中文压根打不进去，跟没打似的**」
+    ///   （聊天框聚焦中，全局输入法却是 Off ✗）
+    /// 以及「挑字吞」（合成中途状态被改写的时机问题 ✗）。
+    ///
+    /// ⚠️ 还试过并**全部失败**的写法，别再试：
+    ///   · 每帧拉回 `Auto`（"自愈"）        → 输入法压根调不出来 ✗
+    ///   · 聊天框打开时归一 `Auto`          → 输入法又死了 ✗
+    ///   · 设 `On` 后再"还原"              → 就是上面那个 Off 覆盖 bug ✗
+    ///
+    /// ✅ **正确做法（与游戏一致）**：聚焦时设 `On` ✓，**失去焦点时什么都不写** ✓
+    ///    —— 之后谁再聚焦谁自己设，游戏在每次焦点切换时都会重设，不需要我们"还原" ✓
+    /// </summary>
+    private static void ApplyImeOnFocus()
+    {
+        try { Input.imeCompositionMode = IMECompositionMode.On; }   // 与 TextBoxTMP.GiveFocus 完全一致 ✓
+        catch { }
+    }
 
     private float _caretTimer;
     private bool _caretOn;
@@ -310,13 +335,7 @@ public class TextFieldBehaviour : MonoBehaviour
             if (ValidField != null && ValidField != this) ValidField.LoseFocus();
 
             ValidField = this;
-            if (UseIME)
-            {
-                // ⚠️ imeCompositionMode 是**全局**设置。关掉后原版聊天框的输入法也会一起失效
-                //    （表现：中文打不进去 / 被吞字）。所以进入编辑前先记住旧值，失焦时还原。
-                if (!_imePushed) { _imeBefore = Input.imeCompositionMode; _imePushed = true; }
-                Input.imeCompositionMode = IMECompositionMode.On;
-            }
+            if (UseIME) ApplyImeOnFocus();   // 与 TextBoxTMP.GiveFocus 一致：只设 On，**不再保存/还原** ✓
 
             Cursor = Value.Length;
             _justFocused = 0.4f;
@@ -335,14 +354,14 @@ public class TextFieldBehaviour : MonoBehaviour
     {
         try
         {
+            // ★★ 2026-10-06 根因（读原版 TextBoxTMP 才看清）：
+            //    原来这里（提前返回**之前**）会把全局输入法"还原"成进入编辑前的旧值 ✗
+            //    而那个旧值往往是游戏 `TextBoxTMP.LoseFocus()` 设的 **`Off`**（=关闭输入法）✗✗
+            //    → 玩家一打开聊天框（原版 GiveFocus 设了 `On` ✓），只要我们的文本框碰巧也走一次
+            //      失焦，就把 `On` 覆盖成 `Off` → **中文压根打不进去、跟没打似的** ✓✓
+            //    → 现在**什么都不写** ✓：游戏的每次焦点切换都会自己重设（GiveFocus/LoseFocus）✓
             if (ValidField != this) return;
 
-            // 还原进入编辑前的 IME 模式（默认 Auto），别把全局输入法关掉
-            if (_imePushed)
-            {
-                Input.imeCompositionMode = _imeBefore;
-                _imePushed = false;
-            }
             ValidField = null;
             if (Pipe != null) Pipe.text = "";
 

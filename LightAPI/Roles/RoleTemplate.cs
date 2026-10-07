@@ -167,8 +167,27 @@ namespace LightInDark.Roles
         public virtual bool CanBeAssigned => true;
 
         /// <summary>
-        /// **这个职业的任务数量**（用户 2026-10-06 要求：职业可以覆写，而且可以**动态**）。
+        /// **本职业击杀时记录的死因 id**（用户 2026-10-06 要求："以后模组自定义死因的啊" ✓）。
         ///
+        /// 默认 `null` = 用内置的"被击杀" ✓（不覆写 = 行为与改动前完全一致 ✓）
+        ///
+        /// 覆写示例（照 Nebula 的 `PlayerStates` 思路，见 <see cref="Game.DeathCause"/>）：
+        /// <code>
+        ///   public override string KillDeathCauseId => "lid.death.jackal_bite";
+        ///
+        ///   // 记得注册显示文本（模块静态构造里做一次即可）
+        ///   static Jackal() => DeathCause.Register("lid.death.jackal_bite",
+        ///                                          "death.jackal.bite", "被豺狼撕咬");
+        /// </code>
+        ///
+        /// ⚠️ id 必须是**稳定字符串**（不要用序号 ✗ —— "击杀记成放逐"就是硬编码序号造成的 ✗）
+        /// ⚠️ 文本里可用 `{0}` 占位凶手名 ✓（拿不到凶手时会被清掉，不会留下光秃秃的 `{0}` ✓）
+        /// </summary>
+        public virtual string KillDeathCauseId => null;
+
+        /// <summary>
+        /// **这个职业的任务数量**（用户 2026-10-06 要求：职业可以覆写，而且可以**动态**）。
+        /// </summary>
         /// ⚠️ 默认值 1 = **不干预**：保持原版按游戏选项发出来的数量 ✓
         ///    （判定见 `RoleTaskCountPatch`：`TaskCount == 1` 时一行都不改 → 纯增量 ✓）
         ///

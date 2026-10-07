@@ -4,6 +4,7 @@
   </Folder>
   <Project Path="Light/LightPluginMain.csproj" />
   <Project Path="LightAPI/LightInDark.csproj" />
+  <Project Path="VerificationServer/VerificationServer.csproj" />
   <Project Path="LightInDarkUpdater/LightInDarkUpdater.pyproj" Type="888888a0-9f3d-457c-b088-3a5042f75d52" Id="3fdd65f5-3350-4145-9636-741a5c071a99">
     <Build Project="false" />
   </Project>

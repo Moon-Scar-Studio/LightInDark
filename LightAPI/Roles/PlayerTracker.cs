@@ -54,15 +54,83 @@ namespace LightInDark.Roles
                 if (IsLocked)
                 {
                     HighlightTarget(CurrentTarget);
+                    DiagnoseOnce(CurrentTarget);
                     return;
                 }
 
                 CurrentTarget = FindClosestTarget();
                 HighlightTarget(CurrentTarget);
+                DiagnoseOnce(CurrentTarget);
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("PlayerTracker.Update", ex);
+            }
+        }
+
+        /// <summary>诊断是否已经打过（只打前几次，避免刷屏 ✓）。</summary>
+        private static int _diagCount;
+
+        /// <summary>
+        /// **一次性诊断**（用户 2026-10-06 报「追踪器不显示」—— 这条日志能一次定位到底是哪种可能 ✓）：
+        ///   · `目标=null` 恒成立            → 是**选目标**的问题（距离/阻挡）
+        ///   · `目标=xxx` 但 `outline=0`     → 有**写入者在我们之后**把它改回去了（顺着帧号找源头）
+        ///   · `outline=1` 且 `body=有` 但看不见 → 是**渲染侧**问题（材质/长身模式/LongModeParts）
+        ///   · 整局没有 `[Tracker]` 日志      → `Update()` 根本没被调到（驱动链问题）
+        /// </summary>
+        private void DiagnoseOnce(Player target)
+        {
+            if (_diagCount >= 5) return;
+            _diagCount++;
+
+            try
+            {
+                var src = _source?.Control;
+                string targetName = "null";
+                float dist = -1f;
+                float outline = -1f, colorA = -1f;
+                int longParts = -1;
+                string body = "无";
+
+                try { if (target != null) { dist = RoleUtils.GetDistance(_source, target); } } catch { }
+                try
+                {
+                    // ⚠️ `Player` 是我们自己的包装类（没有 Data），要走 `Control`（= PlayerControl）
+                    if (target?.Control != null && target.Control.Data != null)
+                        targetName = target.Control.Data.PlayerName;
+                }
+                catch { }
+
+                try
+                {
+                    var bs = target?.Control?.cosmetics?.currentBodySprite?.BodySprite;
+                    if (bs != null)
+                    {
+                        body = "有";
+                        if (bs.material != null)
+                        {
+                            outline = bs.material.GetFloat("_Outline");
+                            colorA = bs.material.GetColor("_OutlineColor").a;
+                        }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    var parts = target?.Control?.cosmetics?.currentBodySprite?.LongModeParts;
+                    if (parts != null) longParts = parts.Length;
+                }
+                catch { }
+
+                LightLogger.Log($"[Tracker] 存活={LightInDark.Game.GameManager.Instance.AllPlayers.Count()} " +
+                                $"源={(src != null ? src.PlayerId.ToString() : "null")} " +
+                                $"目标={targetName} 距离={dist:0.00}/{_maxDistance:0.00} " +
+                                $"body={body} outline={outline:0.##} colorA={colorA:0.##} longParts={longParts}");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[PlayerTracker.DiagnoseOnce] {ex.Message}");
             }
         }
 

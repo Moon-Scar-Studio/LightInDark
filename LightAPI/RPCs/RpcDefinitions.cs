@@ -166,14 +166,16 @@ namespace LightInDark.RPCs
         // ============ 玩家操作 ============
 
         [LidRPC]
-        public static void Suicide(PlayerControl player, bool needLog = true, string state = "suicide", PlayerState playerState = PlayerState.Suicide)
+        public static void Suicide(PlayerControl player, bool needLog = true, string state = "suicide",
+                                   PlayerState playerState = PlayerState.Suicide, string causeId = null)
         {
             try
             {
                 if (player == null || player.Data.IsDead) return;
                 player.RpcMurderPlayer(player, true);
                 EventTriggers.OnPlayerSuicide(player, state, playerState, needLog);
-                LightPlayerDataManager.SetDeath(player.PlayerId, playerState, player.PlayerId, LightPlayerDataManager.CurrentMeetingNumber);
+                LightPlayerDataManager.SetDeath(player.PlayerId, playerState, player.PlayerId,
+                    LightPlayerDataManager.CurrentMeetingNumber, causeId);
                 if (needLog) LightLogger.Log($"[RPC] {player.name} suicide. state:{state}");
             }
             catch (Exception ex)
@@ -182,15 +184,31 @@ namespace LightInDark.RPCs
             }
         }
 
+        /// <summary>
+        /// 记录一次击杀（`[LidRPC]` → **所有客户端一致** ✓）。
+        ///
+        /// ⚠️ `causeId` = **自定义死因 id**（照 Nebula 的 `PlayerStates` 做法，见 <see cref="Game.DeathCause"/>）✓
+        ///    角色/模组可以传自己的，例如：
+        ///    <code>
+        ///      DeathCause.Register("lid.death.jackal_bite", "death.jackal_bite", "被豺狼撕咬");
+        ///      RpcDefinitions.MurderPlayer(killer, victim, PlayerState.BeKilled, "lid.death.jackal_bite");
+        ///      // 或给同一个玩家再记一条额外死因（Nebula 的 ExtraDeadInfo ✓）
+        ///      RpcDefinitions.MurderPlayer(killer, victim, PlayerState.BeKilled, "lid.death.jackal_bite", "lid.death.cursed");
+        ///    </code>
+        ///    不传则按 `state` 自动映射成内置 id ✓（行为与改动前一致 ✓）
+        /// </summary>
         [LidRPC]
-        public static void MurderPlayer(PlayerControl killer, PlayerControl victim, PlayerState state = PlayerState.BeKilled)
+        public static void MurderPlayer(PlayerControl killer, PlayerControl victim,
+                                        PlayerState state = PlayerState.BeKilled,
+                                        string causeId = null, string extraCauseId = null)
         {
             try
             {
                 if (killer == null || victim == null) return;
                 killer.RpcMurderPlayer(victim, true);
                 EventTriggers.OnPlayerMurder(killer, victim, state);
-                LightPlayerDataManager.SetDeath(victim.PlayerId, state, killer.PlayerId, LightPlayerDataManager.CurrentMeetingNumber);
+                LightPlayerDataManager.SetDeath(victim.PlayerId, state, killer.PlayerId,
+                    LightPlayerDataManager.CurrentMeetingNumber, causeId, extraCauseId);
             }
             catch (Exception ex)
             {
@@ -464,6 +482,21 @@ namespace LightInDark.RPCs
             try
             {
                 if (!AmongUsClient.Instance.AmHost) return;
+
+                // ★★ 审查 B11：**校验发送者身份** —— 不允许"替别人预定" ✓
+                //   原来 `senderPlayerId` 只是个**参数**、房主照单全收 ✗
+                //   → 任何客户端都能发"给 X 预定职业 Y"，而且日志里看起来完全合法 ✗
+                //   现在拿 `CustomRPC.CurrentSender`（RPC 层分发期间写入的**真实** PlayerId，
+                //   由承载该 RPC 的 InnerNetObject 推导 —— `CustomRPC.ResolveSenderId`）比对 ✓
+                //   `byte.MaxValue` = 来源不可信 / 本地直调 → 不拦 ✓
+                byte real = CustomRPC.CurrentSender;
+                if (real != byte.MaxValue && real != senderPlayerId)
+                {
+                    LightLogger.LogWarning($"[RPC] **拒绝伪造来源的预定请求**：声称来自 playerId={senderPlayerId}，" +
+                                           $"实际来自 playerId={real}（职业={roleName}）");
+                    return;
+                }
+
                 Roles.Assignment.RolePinManager.HandleRequest(senderPlayerId, roleName);
             }
             catch (Exception ex)
@@ -479,6 +512,15 @@ namespace LightInDark.RPCs
             try
             {
                 if (!AmongUsClient.Instance.AmHost) return;
+
+                // ★ 同 B11：也**不允许替别人取消**（取消他人的预定同样是越权 ✓）
+                byte real = CustomRPC.CurrentSender;
+                if (real != byte.MaxValue && real != senderPlayerId)
+                {
+                    LightLogger.LogWarning($"[RPC] **拒绝伪造来源的取消请求**：声称={senderPlayerId} 实际={real}");
+                    return;
+                }
+
                 Roles.Assignment.RolePinManager.HandleCancel(senderPlayerId);
             }
             catch (Exception ex)

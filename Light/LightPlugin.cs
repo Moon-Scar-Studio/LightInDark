@@ -91,6 +91,7 @@ public partial class LightPlugin : BasePlugin
             RoleConfigRegistrar.Register();   // 职业配置块 + 职业专属项
             Light.Config.AssignmentConfigRegistrar.Register();   // 分配设置（船员/内鬼/中立上限，审查 B7）
             Light.Config.HudLayoutConfigRegistrar.Register();    // HUD 布局（小 HUD / 按钮排列，第 5 批）
+            Light.Config.DetailPopupConfigRegistrar.Register();  // 详情框（配色/字号/留白/尺寸/边框/对齐）
 
             // ★ 职业系统启动自检（2026-10-06）：把"能不能出 / 上限 / 概率 / 翻译是否解析成功 /
             //   Id 是否重复"一次性打进日志 —— 审查里那 50+ 条问题绝大多数是**静默失效**，

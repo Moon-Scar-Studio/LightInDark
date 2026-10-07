@@ -174,10 +174,67 @@ namespace Light.Patches
                 }
 
                 new StandardRoleAllocator().Assign(impostors, others);
+
+                // ★ 2026-10-06 用户要求「给所有 dummy 分配船员职业，不阻止」：
+                //   把**每个玩家**（含假人）的底色职业写进持久数据 ——
+                //   否则 `/replay` 里没有自定义职业的人（尤其假人）显示"未知" ✗
+                RecordBaseRolesForUnassigned();
             }
             catch (System.Exception ex)
             {
                 LightLogger.LogError("[RoleSelectPatch.Postfix]", ex);
+            }
+        }
+
+        /// <summary>
+        /// 给**没有自定义职业**的玩家（含假人）在持久数据里记一笔**底色职业**（船员 / 内鬼）。
+        ///
+        /// ⚠️ 为什么需要（用户 2026-10-06 报「/replay 输出假人职业全是未知」）：
+        ///   分配器刻意跳过假人（`isDummy` 过滤 ✓），所以它们的 `AssignedRoleName` 从来没被写过 ✗
+        ///   → 复盘里显示"未知" ✓（看起来像 Bug ✗）
+        ///   现在统一补上：`crewmate` / `impostor` —— 这两个是**我们自己的兜底职业 CodeName** ✓
+        ///   → 复盘走正常的 `DisplayRole` 路径就能翻译成"船员 / 内鬼" ✓
+        ///   （不再依赖"场上还能读到那个玩家"的兜底分支 ✓ —— 换局后玩家已销毁也照样有名字 ✓）
+        /// </summary>
+        private static void RecordBaseRolesForUnassigned()
+        {
+            int n = 0, dummy = 0;
+            try
+            {
+                // ⚠️ 用 `GameData.AllPlayers` 而不是 `PlayerControl.AllPlayerControls`：
+                //    后者**不含假人**（原版是另外从 GameData 里补进来的，见 RoleManager.SelectRoles L80-86）✗
+                foreach (var info in GameData.Instance.AllPlayers)
+                {
+                    try
+                    {
+                        if (info == null) continue;
+
+                        var gp = LightInDark.Game.GameManager.Instance.GetPlayer(info.PlayerId);
+                        if (gp == null) continue;         // Player 表里没有 → 跳过（不硬造）
+                        if (gp.Role != null) continue;    // 已有自定义职业 → **绝不覆盖** ✓
+
+                        bool impostorSide = false;
+                        try { impostorSide = info.Role != null && info.Role.IsImpostor; } catch { }
+
+                        LightInDark.Game.LightPlayerDataManager.SetRole(
+                            info.PlayerId, impostorSide ? "impostor" : "crewmate");
+
+                        n++;
+                        try { if (info.Object != null && info.Object.isDummy) dummy++; } catch { }
+                    }
+                    catch (Exception ex)
+                    {
+                        LightLogger.LogWarning($"[Patch] 记录底色职业失败：{ex.Message}");
+                    }
+                }
+
+                if (n > 0)
+                    LightLogger.Log($"[Patch] 已为 {n} 名未分配自定义职业的玩家记录底色职业" +
+                                    $"（其中假人 {dummy} 个 → 船员）✓");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("[Patch] RecordBaseRolesForUnassigned", ex);
             }
         }
 
@@ -363,9 +420,22 @@ namespace Light.Patches
             if (wanted > players.Count) wanted = players.Count;
 
             // ── 3. 随机挑内鬼（原版也是随机）──
+            //    ★ 2026-10-06 用户要求：**假人一律当船员、不参与内鬼抽签** ✓
+            //      理由：假人当内鬼会白占一个内鬼名额却什么都不做 ✗，
+            //      而且 `/replay` 里也该显示"船员"而不是"未知" ✓
             var order = players.OrderBy(_ => Rng.Next()).ToList();
             var impostors = new HashSet<byte>();
-            for (int i = 0; i < wanted; i++) impostors.Add(order[i].PlayerId);
+            int dummyCount = 0;
+            foreach (var pc in order)
+            {
+                if (impostors.Count >= wanted) break;
+                bool dummy = false;
+                try { dummy = pc.isDummy; } catch { }
+                if (dummy) { dummyCount++; continue; }     // ★ 假人不当内鬼 ✓
+                impostors.Add(pc.PlayerId);
+            }
+            if (dummyCount > 0)
+                LightLogger.Log($"[Patch] 假人 {dummyCount} 个 → 一律按**船员**处理（不参与内鬼抽签）✓");
 
             // ── 4. 落地：先同步写本地，再广播 ──
             int imp = 0, crew = 0;
@@ -467,9 +537,28 @@ namespace Light.Patches
                 var existing = LightPlayerDataManager.GetData(__instance.PlayerId);
                 if (existing != null && !existing.IsDead)
                 {
-                    // 根据 vanilla DeathReason 映射到 PlayerState
-                    // 0=Kill, 1=Exile, 2=Disconnect
-                    PlayerState state = ((int)reason == 1) ? PlayerState.Exile : PlayerState.Dead;
+                    // ⚠️⚠️ 2026-10-06 用户报「**我击杀的给记成放逐了**」——根因就是这里 ✗
+                    //
+                    //   原来写的是 `((int)reason == 1) ? PlayerState.Exile : PlayerState.Dead`
+                    //   而注释还自以为是地写着 "0=Kill, 1=Exile, 2=Disconnect" ✗✗
+                    //
+                    //   原版 `DeathReason`（19.0 `DeathReason.cs`）的真实顺序是：
+                    //     Exile = 0,  Kill = 1,  Disconnect = 2
+                    //   → `reason == 1` 是 **Kill** → 被记成 **Exile** ✗（击杀→放逐 ✓ 正是用户看到的）
+                    //   → `reason == 0` 是 **Exile** → 反而走了 else → 记成"被 X 击杀" ✗（双向都反了）
+                    //
+                    //   ★ 教训：**枚举一律用名字，永远不要硬编码序号** ✓
+                    //     （这类错误没有异常、没有日志，只有玩家看得出来 ✗）
+                    PlayerState state = reason switch
+                    {
+                        DeathReason.Exile => PlayerState.Exile,
+                        // ⚠️ 击杀用 `PlayerState.Dead`：这是 `PlayerState` 自己的文档建议的写法
+                        //    （`BeKilled` 只是更"精确"的别名；`GetDeathCauseText` 两者都显示成"被 X 击杀" ✓）
+                        DeathReason.Kill => PlayerState.Dead,
+                        DeathReason.Disconnect => PlayerState.Dead,     // 断线：显示时另有 Disconnected 判定 ✓
+                        _ => PlayerState.Dead,
+                    };
+
                     LightPlayerDataManager.SetDeath(
                         __instance.PlayerId, state, null, LightPlayerDataManager.CurrentMeetingNumber);
                 }

@@ -39,6 +39,18 @@ namespace LightInDark.Game
         public string KillerName { get; set; } = "";
         public int DeathMeetingNumber { get; set; } = -1;
 
+        /// <summary>
+        /// **死因 id**（模组可自定义 ✓，照 Nebula 的 `PlayerStates` 做法 —— 见 <see cref="DeathCause"/>）。
+        /// 空 = 还没记（显示时退回 <see cref="State"/> 那套老文案 ✓）
+        /// </summary>
+        public string DeathCauseId { get; set; } = "";
+
+        /// <summary>
+        /// **额外死因记录**（照抄 Nebula 的 `ExtraDeadInfo` ✓）：
+        /// 一个玩家可能"被击杀 + 被诅咒"之类，主死因只能写一个，其余的记在这里 ✓
+        /// </summary>
+        public List<string> ExtraDeathCauses { get; set; } = new();
+
         // ── 任务信息 ──
         public int CompletedTasks { get; set; }
         public int TotalTasks { get; set; }
@@ -46,21 +58,38 @@ namespace LightInDark.Game
         // ── 便捷属性 ──
         public bool HasRoleChanged => RoleHistory.Count > 0;
 
-        /// <summary>获取死亡原因的中文描述</summary>
+        /// <summary>
+        /// 获取死亡原因的中文描述。
+        ///
+        /// ⚠️ 顺序（照 Nebula 的做法 ✓）：
+        ///   ① **自定义死因优先** —— 模组/职业通过 <see cref="DeathCause.Register"/> 注册的文本 ✓
+        ///   ② 没注册就退回 `PlayerState` 那套老文案 ✓（保证不影响任何现有行为 ✓）
+        /// </summary>
         public string GetDeathCauseText()
         {
             try
             {
                 if (!IsDead && !Disconnected) return "存活";
-                if (Disconnected) return "断线";
+                if (Disconnected) return DeathCause.Resolve(DeathCause.Disconnected) ?? "断线";
+
+                string killer = string.IsNullOrEmpty(KillerName) ? "" : KillerName;
+
+                // ① 自定义死因（注册过就用它 ✓）
+                string custom = DeathCause.Resolve(DeathCauseId, killer);
+                if (!string.IsNullOrEmpty(custom)) return custom;
+
                 if (!State.HasValue) return "未知";
+
+                // ② 老文案兜底 ✓
+                string ByKill() => killer.Length > 0 ? $"被 {killer} 击杀" : "被击杀";
+
                 return State.Value switch
                 {
-                    PlayerState.Dead => $"被 {KillerName} 击杀",
+                    PlayerState.Dead => ByKill(),
                     PlayerState.Suicide => "自杀",
-                    PlayerState.BeGuessed => $"被 {KillerName} 猜中",
-                    PlayerState.BeKilled => $"被 {KillerName} 击杀",
-                    PlayerState.GoOff => $"走火（{KillerName}）",
+                    PlayerState.BeGuessed => killer.Length > 0 ? $"被 {killer} 猜中" : "被猜中",
+                    PlayerState.BeKilled => ByKill(),
+                    PlayerState.GoOff => killer.Length > 0 ? $"走火（{killer}）" : "走火",
                     PlayerState.Exile => "被放逐",
                     _ => "死亡"
                 };
@@ -203,8 +232,14 @@ namespace LightInDark.Game
             }
         }
 
-        /// <summary>记录玩家死亡</summary>
-        public static void SetDeath(byte playerId, PlayerState state, byte? killerId, int meetingNumber)
+        /// <summary>
+        /// 记录玩家死亡。
+        /// ⚠️ `causeId` 是**自定义死因 id**（模组/职业可以传自己的 ✓，见 <see cref="DeathCause"/>）——
+        ///    不传（null/空）时自动按 <paramref name="state"/> 映射成内置 id ✓
+        ///    所以**每一次死亡都会有 id** ✓ 显示时不再依赖枚举文案 ✓
+        /// </summary>
+        public static void SetDeath(byte playerId, PlayerState state, byte? killerId, int meetingNumber,
+                                    string causeId = null, string extraCauseId = null)
         {
             try
             {
@@ -215,13 +250,21 @@ namespace LightInDark.Game
                 data.KillerId = killerId;
                 data.DeathMeetingNumber = meetingNumber;
 
+                // ★ 死因 id：自定义优先，否则由枚举映射而来 ✓（枚举只用来"兜底"，不再决定文案 ✓）
+                data.DeathCauseId = string.IsNullOrEmpty(causeId)
+                    ? DeathCause.FromPlayerState(state)
+                    : causeId;
+
+                if (!string.IsNullOrEmpty(extraCauseId))
+                    data.ExtraDeathCauses.Add(extraCauseId);
+
                 if (killerId.HasValue)
                 {
                     var killer = GetData(killerId.Value);
                     data.KillerName = killer?.PlayerName ?? "Unknown";
                 }
 
-                LightLogger.Log($"[PlayerData] {data.PlayerName} 死亡: {state}, 凶手: {data.KillerName}");
+                LightLogger.Log($"[PlayerData] {data.PlayerName} 死亡: {state} 死因={data.DeathCauseId}, 凶手: {data.KillerName}");
             }
             catch (Exception ex)
             {
@@ -281,6 +324,60 @@ namespace LightInDark.Game
             return codeName;                              // 注册表里没有（旧存档/第三方职业）→ 原样显示 ✓
         }
 
+        /// <summary>
+        /// 没有自定义职业时，用**原版底色职业**兜底显示（用户 2026-10-06 报"/replay 里假人职业全是未知"）。
+        ///
+        /// ⚠️ 为什么假人会是空的：分配器**刻意跳过假人**（`isDummy` 过滤 ✓），
+        ///    所以它们的 `AssignedRoleName` / `FinalRoleName` 从来没被写过 ✗
+        ///    → 复盘里显示"未知"，看起来像 Bug ✓
+        ///    它们其实有原版底色职业（`RoleManager` 发的 `Crewmate`/`Impostor` ✓），读出来显示即可 ✓
+        ///
+        /// 取不到就返回"未知"（真的查不到时才说未知 ✓）
+        /// </summary>
+        private static string FallbackRoleName(LightPlayerData data)
+        {
+            try
+            {
+                // ⚠️ 本文件没有 `using System.Linq;` → 手写循环，别用 FirstOrDefault ✗
+                PlayerControl? pc = null;
+                var all = PlayerControl.AllPlayerControls;
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Count; i++)
+                    {
+                        var p = all[i];
+                        if (p != null && p.PlayerId == data.PlayerId) { pc = p; break; }
+                    }
+                }
+
+                var roleType = pc?.Data?.Role?.Role;
+                if (roleType != null)
+                {
+                    switch (roleType.Value)
+                    {
+                        case AmongUs.GameOptions.RoleTypes.Crewmate: return "船员";
+                        case AmongUs.GameOptions.RoleTypes.Impostor: return "内鬼";
+                        case AmongUs.GameOptions.RoleTypes.CrewmateGhost: return "船员（幽灵）";
+                        case AmongUs.GameOptions.RoleTypes.ImpostorGhost: return "内鬼（幽灵）";
+                        case AmongUs.GameOptions.RoleTypes.Engineer: return "工程师";
+                        case AmongUs.GameOptions.RoleTypes.Scientist: return "科学家";
+                        case AmongUs.GameOptions.RoleTypes.Shapeshifter: return "变形者";
+                        case AmongUs.GameOptions.RoleTypes.Phantom: return "魅影";
+                        case AmongUs.GameOptions.RoleTypes.Tracker: return "追踪者";
+                        case AmongUs.GameOptions.RoleTypes.Noisemaker: return "噪音制造者";
+                        case AmongUs.GameOptions.RoleTypes.Detective: return "侦探";
+                        case AmongUs.GameOptions.RoleTypes.GuardianAngel: return "守护天使";
+                        default: return roleType.Value.ToString();      // 兜底：枚举名（总比"未知"有信息量 ✓）
+                    }
+                }
+
+                // 原版职业也读不到（玩家已不在场上）→ 至少把"是不是假人"说清楚 ✓
+                if (pc != null && pc.isDummy) return "假人";
+            }
+            catch { }
+            return "未知";
+        }
+
         /// <summary>生成复盘文本</summary>
         public static string BuildReplayText()
         {
@@ -306,8 +403,11 @@ namespace LightInDark.Game
                     var status = data.GetDeathCauseText();
                     // ★ 审查 A16：持久数据里存的是 **CodeName（内部名）**，显示前必须翻成当前语言的名字 ✓
                     //   （否则复盘里会直接看到 `caller` 这种内部名 ✗）
+                    // ★ 2026-10-06 用户报「/replay 输出假人职业全是未知」——
+                    //   假人**不会**被分配自定义职业（分配器刻意跳过它们 ✓），所以这里存的是空串 ✗
+                    //   → 空的时候退回去读**原版底色职业**（船员/内鬼…），而不是一律显示"未知" ✓
                     var role = string.IsNullOrEmpty(data.FinalRoleName)
-                        ? "未知"
+                        ? FallbackRoleName(data)
                         : DisplayRole(data.FinalRoleName);
                     var taskInfo = data.TotalTasks > 0 ? $" 任务:{data.CompletedTasks}/{data.TotalTasks}" : "";
                     var changeInfo = data.HasRoleChanged

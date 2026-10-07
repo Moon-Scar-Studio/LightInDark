@@ -64,6 +64,13 @@ public static class IntroPatch
                 inst.RoleBlurbText.text = role.IntroText;
                 inst.RoleBlurbText.color = LightInDark.ColorHelper.ToUnityColor(role.Color);
             }
+
+            // ── 3. "你的职业是"那行也染成职业色（用户 2026-10-06 要求）──
+            //    原版 `IntroCutscene` 里 `YouAreText` 用的是**原版职业的颜色**（我们自己没改过它 ✗）
+            //    → 底层的底色职业是船员时永远是白字，和我们上面写的职业名颜色对不上 ✗
+            //    这里一起染成同一个颜色，画面才统一 ✓
+            if (inst.YouAreText != null)
+                inst.YouAreText.color = LightInDark.ColorHelper.ToUnityColor(role.Color);
         }
         catch (Exception ex)
         {

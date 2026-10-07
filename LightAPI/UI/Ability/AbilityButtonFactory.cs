@@ -39,7 +39,10 @@ namespace LightInDark.UI.Ability
                     var target = tracker.CurrentTarget;
                     if (target?.Control == null) return;
 
-                    RpcDefinitions.MurderPlayer(owner.Control, target.Control, PlayerState.BeKilled);
+                    // ★ 死因：**由职业决定** ✓（`RoleTemplate.KillDeathCauseId`，模组可自定义）
+                    //   没覆写 → null → `SetDeath` 自动映射成内置"被击杀" ✓（行为与改动前一致 ✓）
+                    RpcDefinitions.MurderPlayer(owner.Control, target.Control, PlayerState.BeKilled,
+                        role.Role.KillDeathCauseId);
                     onKill?.Invoke(target);
                 });
         }

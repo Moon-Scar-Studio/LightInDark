@@ -368,6 +368,15 @@ public static class ChatRichTextPatch
     /// <summary>每帧轮询入口（由 <see cref="ChatPreviewDriver"/> 调用；不参与输入链路）。</summary>
     internal static void Tick(FreeChatInputField field)
     {
+        // ⚠️⚠️ 这里**绝对不要**再写 `Input.imeCompositionMode` ✗✗
+        //    2026-10-06 三次实测：任何"帮玩家修输入法"的写入都会害死输入法 ——
+        //      · 设 `On`（强制合成）→ 挑字吞
+        //      · 每帧拉回 `Auto`（自愈）→ 输入法压根调不出来
+        //      · 聊天框打开时归一 `Auto`（一次性）→ 输入法又死了
+        //    → 结论：**全局输入法状态归玩家与游戏自己管，我们一个字都不写** ✓
+        //      （我们自己的文本框那套 push/restore 是原本就有的，见 GUITextField，
+        //        只在"我们自己的文本框聚焦期间"生效并会还原 ✓）
+
         EnsureInputRawDisplay(field);               // 输入框永远显示原始标签（发出去才渲染）
         RefreshPreviewButton(field);
         DiagnoseChatText(field);

@@ -157,37 +157,112 @@ namespace LightInDark.UI.Ability
             if (IsDeadObject) return;
             try
             {
-                // ★ 冷却推进条件（两边的修复**合并保留**）：
-                //   ① `ShouldTickCooldown()` —— 本轮的**默认策略**（对齐 Nebula 的
-                //      `TimerImpl.SetAsAbilityCoolDown` / 老版 `Helpers.ProceedTimer`）：
-                //      通风管 / 会议 / 放逐 / 开场 / 非白名单小游戏里 CD 不推进 ✓
-                //   ② `_config.CanRunCooldown` —— 对面（bb82d8d）加的**按钮级**可配谓词
-                //      （参数 = 当前剩余秒数）✓ 为 null 时不干预 ✓
-                //   两个都通过才推进 → 谁的功能都没丢 ✓
-                if (_inCooldown
-                    && ShouldTickCooldown()
-                    && (_config.CanRunCooldown?.Invoke(_cooldownTimer) ?? true))
-                {
-                    _cooldownTimer -= Time.deltaTime;
-                    if (_cooldownTimer <= 0f)
-                    {
-                        _cooldownTimer = 0f;
-                        _inCooldown = false;
-                        OnCooldownFinished();
-                    }
-                }
-                UpdateVisibility();
-                UpdateUsability();
-                UpdateCooldownDisplay();
+                // ★ 冷却推进（抽成 TickCooldown —— 效果型按钮在效果期间也要调它 ✓）
+                TickCooldown();
+
+                // ② UI 刷新：**唯一出口** ✓
+                //    （对齐 Nebula `ModAbilityButtonImpl.UpdateVisibility()` 的形状 ——
+                //      子类只要覆写 `Refresh()` 就能整体接管刷新顺序，
+                //      不必再各自拼 "Visibility → Usability → 进度 → 补色" 这种序列 ✗）
+                Refresh();
+
+                // ③ 输入（不属于 UI 刷新，单独走）
                 UpdateHotkey();
                 UpdateSubHotkey();
                 UpdateMouseClick();
-                UpdateFlash();
             }
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[RoleButtonBase.Update] {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// **冷却推进**（从 `Update()` 抽出，供效果型按钮在效果期间复用 ✓）。
+        ///
+        /// 推进条件 = 三者同时满足：
+        ///   ① `ShouldTickCooldown()` —— 用不了技能的场合（管道 / 会议 / 放逐 / 开场 / 非白名单小游戏）不走 ✓
+        ///   ② `_config.CanRunCooldown` —— 按钮级可配谓词（对面 merge 进来的，默认 = 原版 `IsKillTimerEnabled`）✓
+        ///   ③ 真的在冷却中 ✓
+        ///
+        /// ⚠️ 2026-10-06 用户报「点击后进入 CD，但 **CD 不转**」——
+        ///    根因：`EffectButton` 原来在效果期间走自己的分支、**完全不推冷却** ✗
+        ///    → 持续型效果（`EffectDuration &lt;= 0`）期间 CD **永远不走**（表现就是 CD 卡住）✗
+        /// </summary>
+        protected void TickCooldown()
+        {
+            try
+            {
+                if (!_inCooldown) return;
+
+                bool tickGate = ShouldTickCooldown();
+                bool configGate = _config.CanRunCooldown?.Invoke(_cooldownTimer) ?? true;
+
+                // ★ 取证：冷却期间每秒打一条（上限 12 条 ✓），把每个闸门的真实取值打出来 ——
+                //   用户报「CD 不转」时，这一条就能指出到底卡在哪个条件上 ✓（AGENTS §4.8）
+                DiagnoseCooldown(tickGate, configGate);
+
+                if (!tickGate) return;
+                if (!configGate) return;
+
+                _cooldownTimer -= Time.deltaTime;
+                if (_cooldownTimer <= 0f)
+                {
+                    _cooldownTimer = 0f;
+                    _inCooldown = false;
+                    OnCooldownFinished();
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RoleButtonBase.TickCooldown] {ex.Message}");
+            }
+        }
+
+        /// <summary>冷却推进诊断（每秒一条、最多 12 条 ✓）。</summary>
+        private void DiagnoseCooldown(bool tickGate, bool configGate)
+        {
+            try
+            {
+                if (_diagCooldownCount >= 12) return;
+                if (Time.unscaledTime - _diagCooldownLast < 1f) return;
+                _diagCooldownLast = Time.unscaledTime;
+                _diagCooldownCount++;
+
+                var c = _player?.Control;
+                if (c == null) c = PlayerControl.LocalPlayer;
+
+                bool inVent = false, meeting = false, intro = false, movable = false, killTimer = false;
+                string mini = "null";
+                try { if (c != null) { inVent = c.inVent; movable = c.moveable; killTimer = c.IsKillTimerEnabled; } } catch { }
+                try { meeting = MeetingHud.Instance != null; } catch { }
+                try { intro = IntroCutscene.Instance != null; } catch { }
+                try { var mg = Minigame.Instance; if (mg != null) mini = mg.GetType().Name; } catch { }
+
+                LightLogger.Log($"[CD] {GetType().Name}({_config.Label}) 剩余={_cooldownTimer:0.00}/{_config.Cooldown:0.00} " +
+                                $"推进={tickGate} 配置谓词={configGate} | inVent={inVent} moveable={movable} " +
+                                $"killTimer={killTimer} 会议={meeting} 开场={intro} 小游戏={mini}");
+            }
+            catch { }
+        }
+
+        private int _diagCooldownCount;
+        private float _diagCooldownLast;
+
+        /// <summary>
+        /// **单一 UI 刷新出口**（第 4 批）。
+        ///
+        /// 顺序固定为：显示/隐藏 → 可用性（灰/亮）→ 冷却进度环 → 闪白。
+        /// ⚠️ 子类要在"可用性写完之后"补东西（例如 `EffectButton` 的绿色提示 ——
+        ///    `SetEnabled()` 会写 `buttonLabelText.color`，晚写才能生效 §4.4），
+        ///    **覆写本方法并在 `base.Refresh()` 之后写**即可 ✓ 不用再去改 `Update()` 的调用序列 ✓
+        /// </summary>
+        protected virtual void Refresh()
+        {
+            UpdateVisibility();
+            UpdateUsability();
+            UpdateCooldownDisplay();
+            UpdateFlash();
         }
 
         /// <summary>
@@ -296,7 +371,12 @@ namespace LightInDark.UI.Ability
         private ActionButton? _actionButton;
 
         /// <summary>上次处理点击的帧号（同一帧只处理一次）。</summary>
-        private int _lastClickFrame = -1;
+        /// <summary>
+        /// 上次点击的帧号（**同一帧去重**，AGENTS §13.3）。
+        /// ⚠️ 必须是 `protected`：`EffectButton` 覆写了 `HandleClick`，也要用同一套去重 ✓
+        ///    （2026-10-06 用户报"按钮可以点两次"的根因就是子类覆写时漏掉了这一步 ✗）
+        /// </summary>
+        protected int _lastClickFrame = -1;
 
         /// <summary>
         /// 让**运行期新建**的渲染器继承克隆体的排序层级（AGENTS §4.3）。

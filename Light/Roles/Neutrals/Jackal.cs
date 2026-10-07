@@ -18,6 +18,19 @@ public class Jackal : RoleTemplate
 
     public static readonly Jackal MyRole = new();
 
+    /// <summary>本职业击杀时记录的自定义死因 id（用户在 2026-10-06 要求"模组自定义死因" ✓）。</summary>
+    public const string KillCauseId = "lid.death.jackal";
+
+    /// <summary>
+    /// 注册死因显示文本。
+    /// ⚠️ 静态构造里做一次 —— 放在这里的原因：`MyRole` 是静态字段，
+    ///    而静态字段初始化**先于**静态构造体执行 ✓ 所以注册一定发生在职业被使用之前 ✓
+    /// </summary>
+    static Jackal()
+    {
+        LightInDark.Game.DeathCause.Register(KillCauseId, "death.jackal", "被豺狼击杀");
+    }
+
     public override string CodeName => Code;
     public override LightInDark.Color Color => new(0f, 162f / 255f, 211f / 255f, 1f);
     public override RoleCategory RoleCategory => RoleCategory.Neutral;
@@ -27,6 +40,9 @@ public class Jackal : RoleTemplate
     public override bool CanUseVents => true;
     public override float KillCooldown => ConfigRegistry.GetFloat($"role.{Code}.killCooldown");
     public override AllocationParameters Allocation => new() { MaxCount = 1, Chance = 30 };
+
+    /// <summary>击杀时用自定义死因 ✓（复盘里会显示"被豺狼击杀"而不是笼统的"被击杀" ✓）</summary>
+    public override string KillDeathCauseId => KillCauseId;
 
     public static bool CanCreateSidekick => ConfigRegistry.GetBool($"role.{Code}.canCreateSidekick");
     public static int MaxSidekicks => ConfigRegistry.GetInt($"role.{Code}.maxSidekicks");
@@ -93,7 +109,8 @@ public class Jackal : RoleTemplate
             var target = _recruitTracker?.CurrentTarget;
             if (target?.Control == null) return;
 
-            RpcDefinitions.SetRole(target.Control.PlayerId, Sidekick.MyRole.Id, null);
+            // ★ 审查 A3：按 **CodeName** 下发（Id 会因注册顺序错位而发错职业 ✗）
+            RpcDefinitions.SetRoleByCode(target.Control.PlayerId, Sidekick.MyRole.CodeName, null);
             _recruitButton?.Release();
             _recruitButton = null;
         }
@@ -118,7 +135,7 @@ public class Jackal : RoleTemplate
             if (client == null || !client.AmHost) return;
 
             foreach (var member in RoleTeam.Members(Code, true).Where(p => p.Role?.Role is Sidekick).ToList())
-                RpcDefinitions.SetRole(member.Control.PlayerId, MyRole.Id, null);
+                RpcDefinitions.SetRoleByCode(member.Control.PlayerId, MyRole.CodeName, null);   // A3：按 CodeName ✓
         }
     }
 }
