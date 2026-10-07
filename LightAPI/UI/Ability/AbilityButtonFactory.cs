@@ -33,7 +33,7 @@ namespace LightInDark.UI.Ability
                 .SetHotkey(hotkey)
                 .SetLabelKey("Button.Kill.label")
                 .SetCooldown(role.Role.KillCooldown)
-                .SetCanUse(() => tracker.CurrentTarget != null),
+                .SetCanUse(() => tracker.CurrentTarget != null&&PlayerControl.LocalPlayer.CanMove),
                 () =>
                 {
                     var target = tracker.CurrentTarget;

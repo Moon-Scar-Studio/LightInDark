@@ -171,11 +171,23 @@ namespace LightInDark.RPCs
         }
 
         /// <summary>
-        /// 处理收到的自定义 RPC。
-        /// 从 reader 读取 hash，查找 handler，执行。
+        /// 当前正在分发的自定义 RPC 的**真实发送者** PlayerId。
+        /// 由接收侧补丁在调用 handler 前设置，handler 内可读取；来源不可确定时为 <see cref="byte.MaxValue"/>。
+        /// 供握手等场景校验"报文自称的身份"与真实发送者是否一致（防止冒充他人）。
         /// </summary>
-        internal static void HandleRpc(MessageReader reader)
+        public static byte CurrentSender { get; private set; } = byte.MaxValue;
+
+        /// <summary>处理收到的自定义 RPC（来源不可知时使用）。</summary>
+        internal static void HandleRpc(MessageReader reader) => HandleRpcFrom(byte.MaxValue, reader);
+
+        /// <summary>
+        /// 处理收到的自定义 RPC：从 reader 读取 hash，查找 handler 并执行。
+        /// 分发期间把真实发送者写入 <see cref="CurrentSender"/>，结束后还原。
+        /// </summary>
+        internal static void HandleRpcFrom(byte senderId, MessageReader reader)
         {
+            byte prev = CurrentSender;
+            CurrentSender = senderId;
             try
             {
                 int hash = reader.ReadInt32();
@@ -191,6 +203,10 @@ namespace LightInDark.RPCs
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[CustomRPC] 处理失败: {ex.Message}\n{ex.StackTrace}");
+            }
+            finally
+            {
+                CurrentSender = prev;
             }
         }
     }
@@ -211,7 +227,7 @@ namespace LightInDark.RPCs
             {
                 if (callId != CustomRPC.RpcCallId) return true; // 不是我们的 RPC，正常处理
 
-                CustomRPC.HandleRpc(reader);
+                CustomRPC.HandleRpcFrom(ResolveSenderId(__instance), reader);
                 return false; // 阻止原版处理
             }
             catch (Exception ex)
@@ -219,6 +235,26 @@ namespace LightInDark.RPCs
                 LightLogger.LogError("CustomRpcHandlePatch.Prefix", ex);
                 return true;
             }
+        }
+
+        /// <summary>
+        /// 由承载本次 RPC 的 InnerNetObject 推导真实发送者：
+        /// 优先取 PlayerControl.PlayerId；否则用 OwnerId 映射到客户端再取其角色。
+        /// 无法确定时返回 <see cref="byte.MaxValue"/>（来源不可信）。
+        /// </summary>
+        internal static byte ResolveSenderId(InnerNetObject obj)
+        {
+            try
+            {
+                if (obj is PlayerControl pc) return pc.PlayerId;
+                var client = AmongUsClient.Instance?.GetClient(obj.OwnerId);
+                if (client?.Character != null) return client.Character.PlayerId;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[CustomRPC] 解析发送者失败: {ex.Message}");
+            }
+            return byte.MaxValue;
         }
     }
 
@@ -235,7 +271,7 @@ namespace LightInDark.RPCs
             {
                 if (callId != CustomRPC.RpcCallId) return true;
 
-                CustomRPC.HandleRpc(reader);
+                CustomRPC.HandleRpcFrom(__instance.PlayerId, reader);
                 return false;
             }
             catch (Exception ex)

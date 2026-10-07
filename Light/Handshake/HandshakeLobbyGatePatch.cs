@@ -5,38 +5,61 @@ using UnityEngine;
 namespace Light.Handshake;
 
 /// <summary>
-/// 房主侧大厅闸门（红名 + 阻止开始）。
-/// [已禁用-握手系统] 为保可玩性，握手整体暂停（2026-09-26）。
-/// 恢复时：取消本类各 patch 方法体内注释，并在 LightPlugin.Load 中恢复 Initialize()。
+/// 房主侧大厅闸门：未通过验证的玩家红名；存在待验证/未通过者时阻止开始。
+/// 受 <see cref="HandshakeManager.IsEnabled"/> 约束。
 /// </summary>
 [HarmonyPatch(typeof(GameStartManager))]
 public static class HandshakeLobbyGatePatch
 {
+    // 是否由本补丁置灰了开始按钮（仅在这种情况下才负责恢复，避免覆盖原版自身的可用性判断）
+    static bool _weDisabledButton;
+
+    /// <summary>是否应阻止开始：有等待验证者始终阻止；未通过者仅在 Kick 模式下阻止（Warn 模式只提示、不拦开始）。</summary>
+    static bool ShouldBlock()
+    {
+        bool kickMode = (LightPlugin.LightSettingsData?.HandshakeMode ?? 0) == (int)HandshakeModeOption.Kick;
+        return HandshakeManager.HasPending() || (kickMode && HandshakeManager.HasUnverified());
+    }
+
     [HarmonyPatch(nameof(GameStartManager.Update))]
     [HarmonyPostfix]
     public static void UpdatePostfix(GameStartManager __instance)
     {
         try
         {
-            // [已禁用-握手系统]
-            // if (AmongUsClient.Instance?.AmHost != true) return;
-            // if (string.IsNullOrEmpty(LightPlugin.LightSettingsData.VerifyServerUrl)) return;
-            //
-            // RefreshUnverifiedNames();
-            //
-            // bool blocked = HandshakeManager.HasUnverified();
-            // if (!blocked) return;
-            //
-            // __instance.startState = GameStartManager.StartingStates.NotStarting;
-            // if (__instance.StartButton != null)
-            // {
-            //     __instance.StartButton.SetButtonEnableState(false);
-            //     __instance.StartButton.ChangeButtonText("正在等待玩家");
-            // }
-            // if (__instance.GameStartText != null)
-            // {
-            //     __instance.GameStartText.text = "正在等待玩家";
-            // }
+            if (AmongUsClient.Instance?.AmHost != true) return;
+            if (!HandshakeManager.IsEnabled) return;
+
+            // 每帧刷新红名：未通过验证的玩家红名，其余恢复原色
+            foreach (var pc in PlayerControl.AllPlayerControls)
+            {
+                if (pc == null) continue;
+                if (HandshakeManager.IsUnverified(pc.PlayerId))
+                    HandshakeManager.MarkNameRed(pc.PlayerId);
+                else
+                    HandshakeManager.RestoreNameColor(pc.PlayerId);
+            }
+
+            if (ShouldBlock())
+            {
+                __instance.startState = GameStartManager.StartingStates.NotStarting;
+                if (__instance.StartButton != null)
+                {
+                    __instance.StartButton.SetButtonEnableState(false);
+                    __instance.StartButton.ChangeButtonText("正在等待玩家");
+                    _weDisabledButton = true;
+                }
+                if (__instance.GameStartText != null)
+                {
+                    __instance.GameStartText.text = "正在等待玩家";
+                }
+            }
+            else if (_weDisabledButton && __instance.StartButton != null)
+            {
+                // 只恢复"本补丁置灰"的按钮；文案交由原版刷新
+                __instance.StartButton.SetButtonEnableState(true);
+                _weDisabledButton = false;
+            }
         }
         catch (System.Exception ex)
         {
@@ -50,19 +73,22 @@ public static class HandshakeLobbyGatePatch
     {
         try
         {
-            // [已禁用-握手系统]
-            // if (AmongUsClient.Instance?.AmHost != true) return true;
-            // if (string.IsNullOrEmpty(LightPlugin.LightSettingsData.VerifyServerUrl)) return true;
-            // if (!HandshakeManager.HasUnverified()) return true;
-            //
-            // __instance.startState = GameStartManager.StartingStates.NotStarting;
-            // if (__instance.StartButton != null)
-            // {
-            //     __instance.StartButton.SetButtonEnableState(false);
-            //     __instance.StartButton.ChangeButtonText("正在等待玩家");
-            // }
-            // LightLogger.LogWarning("[Handshake] 存在未验证玩家，阻止开始游戏");
-            // return false;
+            if (AmongUsClient.Instance?.AmHost != true) return true;
+            if (!HandshakeManager.IsEnabled) return true;
+            if (!ShouldBlock()) return true;
+
+            __instance.startState = GameStartManager.StartingStates.NotStarting;
+            if (__instance.StartButton != null)
+            {
+                __instance.StartButton.SetButtonEnableState(false);
+                __instance.StartButton.ChangeButtonText("正在等待玩家");
+            }
+            if (__instance.GameStartText != null)
+            {
+                __instance.GameStartText.text = "正在等待玩家";
+            }
+            LightLogger.LogWarning("[Handshake] 存在待验证/未通过玩家，阻止开始游戏");
+            return false;
         }
         catch (System.Exception ex)
         {
@@ -70,30 +96,9 @@ public static class HandshakeLobbyGatePatch
         }
         return true; // 不拦截
     }
-
-    /// <summary>每帧把未验证玩家名字刷红、验证通过/离开的恢复原色。[已禁用]</summary>
-    private static void RefreshUnverifiedNames()
-    {
-        try
-        {
-            // [已禁用-握手系统]
-            // foreach (var pc in PlayerControl.AllPlayerControls)
-            // {
-            //     if (pc == null) continue;
-            //     if (HandshakeManager.IsUnverified(pc.PlayerId))
-            //         HandshakeManager.MarkNameRed(pc.PlayerId);
-            //     else
-            //         HandshakeManager.RestoreNameColor(pc.PlayerId);
-            // }
-        }
-        catch (System.Exception ex)
-        {
-            LightLogger.LogWarning("[HandshakeLobbyGatePatch.Refresh] " + ex.Message);
-        }
-    }
 }
 
-/// <summary>玩家角色销毁时清理握手状态（红名记录等）。[已禁用]</summary>
+/// <summary>玩家角色销毁时恢复名字颜色并清理握手状态。</summary>
 [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.OnDestroy))]
 public static class HandshakePlayerDestroyPatch
 {
@@ -101,9 +106,9 @@ public static class HandshakePlayerDestroyPatch
     {
         try
         {
-            // [已禁用-握手系统]
-            // if (__instance == null) return;
-            // HandshakeManager.CleanupPlayer(__instance.PlayerId);
+            if (__instance == null) return;
+            HandshakeManager.RestoreNameColor(__instance.PlayerId);
+            HandshakeManager.CleanupPlayer(__instance.PlayerId);
         }
         catch (System.Exception ex)
         {

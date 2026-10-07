@@ -43,7 +43,6 @@ namespace LightInDark.UI.Ability
 
         private GameObject _usesIcon;
         private TextMeshPro _usesIconText;
-
         protected RoleButtonBase(RuntimeRoleTemplate role, Player player, RoleButtonConfig config, Action onClick)
         {
             _role = role;
@@ -55,7 +54,7 @@ namespace LightInDark.UI.Ability
 
         /// <summary>所属职业运行时实例。</summary>
         public RuntimeRoleTemplate Role => _role;
-
+        public Predicate<float> CanRunCooldown => _config.CanRunCooldown;
         /// <summary>绑定的玩家。</summary>
         public Player MyPlayer => _player;
 
@@ -158,9 +157,16 @@ namespace LightInDark.UI.Ability
             if (IsDeadObject) return;
             try
             {
-                // ★ 冷却推进条件（2026-10-06 对齐 Nebula 的 `TimerImpl.SetAsAbilityCoolDown` /
-                //   老版 `Helpers.ProceedTimer`）：**用不了技能的场合，CD 不该前进** ✓
-                if (_inCooldown && ShouldTickCooldown())
+                // ★ 冷却推进条件（两边的修复**合并保留**）：
+                //   ① `ShouldTickCooldown()` —— 本轮的**默认策略**（对齐 Nebula 的
+                //      `TimerImpl.SetAsAbilityCoolDown` / 老版 `Helpers.ProceedTimer`）：
+                //      通风管 / 会议 / 放逐 / 开场 / 非白名单小游戏里 CD 不推进 ✓
+                //   ② `_config.CanRunCooldown` —— 对面（bb82d8d）加的**按钮级**可配谓词
+                //      （参数 = 当前剩余秒数）✓ 为 null 时不干预 ✓
+                //   两个都通过才推进 → 谁的功能都没丢 ✓
+                if (_inCooldown
+                    && ShouldTickCooldown()
+                    && (_config.CanRunCooldown?.Invoke(_cooldownTimer) ?? true))
                 {
                     _cooldownTimer -= Time.deltaTime;
                     if (_cooldownTimer <= 0f)

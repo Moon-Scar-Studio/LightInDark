@@ -1,7 +1,9 @@
 using BepInEx;
 using LightInDark.Core;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -15,15 +17,12 @@ namespace LightInDark.Handshake
     /// </summary>
     public static class HandshakeCrypto
     {
-        /// <summary>验证服务器公钥（PEM）。已嵌入真实公钥（2026-09-26 重新生成，旧密钥曾入 git 历史故更换）。</summary>
+        /// <summary>验证服务器公钥（PEM），取自线上 GET /pubkey。</summary>
         public const string PublicKeyPem =
             "-----BEGIN PUBLIC KEY-----\n" +
-            "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESYcReDUo3QHkY7Q05gd5JfNXk9l6\n" +
-            "DdbF3HW5z4lygUYthh7VHde8GFswBGey6JRPaFK5PTHfiZbycMpPXFlWiA==\n" +
+            "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEz9PVNNRRieHiMwD5g6mOjjcBHLkb\n" +
+            "AzBtgX7o9w3d1vB6M5qclqsXZ5dMNiUiFRNlEMbFJNVnlj5007wj/mVLFw==\n" +
             "-----END PUBLIC KEY-----";
-
-        /// <summary>版本号，与服务器 official.json 的 version 对应。</summary>
-        public const string ProtocolVersion = "1.0.0";
 
         /// <summary>
         /// 计算文件 hash（SHA256 前 4 字节 → int32）。
@@ -47,32 +46,85 @@ namespace LightInDark.Handshake
 
         /// <summary>
         /// 计算本地两个插件的 hash：LightInDark.dll（API）与 Light.dll（模组）。
-        /// 返回 (apiHash, modHash)。找不到文件时返回 (0,0)。
+        /// 返回 (apiHash, modHash)。定位失败时对应值为 0 并记录告警。
         /// </summary>
         public static (int apiHash, int modHash) ComputeLocalHashes()
         {
-            int api = 0, mod = 0;
+            int api = ResolvePluginHash("LightInDark.dll", GetAssemblyLocation(typeof(LIDPlugin).Assembly));
+            int mod = ResolvePluginHash("Light.dll", GetModAssemblyLocation());
+            return (api, mod);
+        }
+
+        // 优先用已加载程序集的实际位置，兜底在插件目录递归查找；都失败则告警并返回 0
+        private static int ResolvePluginHash(string fileName, string assemblyLocation)
+        {
+            var tried = new List<string>();
+            if (assemblyLocation != null)
+            {
+                tried.Add($"程序集位置 {assemblyLocation}");
+                if (File.Exists(assemblyLocation)) return ComputeFileHash(assemblyLocation);
+            }
             try
             {
-                string pluginDir = Paths.PluginPath;
-                string apiPath = Path.Combine(pluginDir, "LightInDark.dll");
-                string modPath = Path.Combine(pluginDir, "Light.dll");
-                if (File.Exists(apiPath)) api = ComputeFileHash(apiPath);
-                if (File.Exists(modPath)) mod = ComputeFileHash(modPath);
+                string dir = Paths.PluginPath;
+                tried.Add($"递归查找 {dir}");
+                string found = FindFileRecursive(dir, fileName);
+                if (found != null) return ComputeFileHash(found);
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("[HandshakeCrypto.ComputeLocalHashes]", ex);
             }
-            return (api, mod);
+            LightLogger.LogWarning($"[HandshakeCrypto] 未能定位 {fileName}，该 hash 将上报 0（会导致验证失败）；已尝试：{string.Join("；", tried)}");
+            return 0;
+        }
+
+        // 取程序集所在路径；动态/内存程序集无 Location，安全返回 null
+        private static string GetAssemblyLocation(Assembly asm)
+        {
+            try { return string.IsNullOrEmpty(asm?.Location) ? null : asm.Location; }
+            catch { return null; }
+        }
+
+        // LightAPI 不引用 Light，只能用程序集名从已加载程序集里找模组本体
+        private static string GetModAssemblyLocation()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.GetName().Name != "Light") continue;
+                string loc = GetAssemblyLocation(asm);
+                if (loc != null) return loc;
+            }
+            return null;
+        }
+
+        // 递归查找文件；目录不存在或无权访问时安全跳过
+        private static string FindFileRecursive(string dir, string fileName)
+        {
+            try
+            {
+                string direct = Path.Combine(dir, fileName);
+                if (File.Exists(direct)) return direct;
+                foreach (var sub in Directory.GetDirectories(dir))
+                {
+                    string found = FindFileRecursive(sub, fileName);
+                    if (found != null) return found;
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("[HandshakeCrypto.FindFileRecursive]", ex);
+            }
+            return null;
         }
 
         /// <summary>
         /// 解析并验证票据（签名 + 版本 + 过期），返回票据内嵌的信息。
         /// 不做 hash 比对（由调用方决定比对基准）。
         /// </summary>
+        /// <param name="expectedVersion">期望的版本号（调用方传模组版本，单一来源）。</param>
         /// <returns>true 表示票据由官方服务器签发且未过期。</returns>
-        public static bool TryParse(string ticketBase64,
+        public static bool TryParse(string ticketBase64, string expectedVersion,
             out string accountId, out long exp,
             out int apiHash, out int modHash, out string version,
             out int nonce)
@@ -92,7 +144,8 @@ namespace LightInDark.Handshake
 
                 int o = 0;
                 int accLen = raw[o++];
-                if (accLen > 64) return false;
+                // accountId 之后至少还要有 verLen(1) + nonce(4) + apiHash(4) + modHash(4) + exp(8) + sig(64)
+                if (accLen > 64 || o + accLen > raw.Length - (1 + 4 + 4 + 4 + 8 + 64)) return false;
                 accountId = Encoding.UTF8.GetString(raw, o, accLen); o += accLen;
 
                 int verLen = raw[o++];
@@ -104,12 +157,12 @@ namespace LightInDark.Handshake
                 modHash = ReadInt32(raw, ref o);
                 exp = ReadInt64(raw, ref o);
 
-                if (version != ProtocolVersion) return false;
+                if (!string.Equals(version, expectedVersion, StringComparison.Ordinal)) return false;
                 if (exp < DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return false; // 过期
 
                 int payloadLen = o;
                 int sigLen = raw.Length - payloadLen;
-                // 服务器 ECDsa.SignData 默认为 IEEE P1363 格式（r‖s，各 32 字节 = 64 字节）
+                // 服务器 ECDsa.SignData 默认输出 IEEE P1363 格式（r‖s，各 32 字节，共 64 字节；非 DER）
                 if (sigLen != 64) return false;
 
                 byte[] payload = new byte[payloadLen];

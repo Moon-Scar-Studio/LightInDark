@@ -74,7 +74,7 @@ public class Jackal : RoleTemplate
                 .SetLeftSide(true)
                 .SetIcon(ResourceHelper.LoadSpriteFromResource("Light.Resources.Roles.SidekickButton.png", 115f))
                 .SetLabelKey("Jackal.recruit")
-                .SetCanUse(() => _killCount >= 1 && _recruitTracker?.CurrentTarget != null),
+                .SetCanUse(() =>PlayerControl.LocalPlayer.CanMove&& _killCount >= 1 && _recruitTracker?.CurrentTarget != null),
                 RecruitTrackedTarget);
 
             RefreshRecruitHint();
