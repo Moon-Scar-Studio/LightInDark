@@ -66,11 +66,17 @@
 
 ## 许可证
 
-本项目源代码采用 **GNU General Public License v3.0** 授权，详见 [LICENSE](./LICENSE)。
+本项目**源代码**采用 **GNU General Public License v3.0** 授权，详见 [LICENSE](./LICENSE)。
 
 SPDX-License-Identifier: GPL-3.0-only
 
-你可以自由使用、修改和分发本项目，但分发修改版或二进制版时，必须保留版权声明与许可证，并提供对应的完整源代码。
+你可以自由使用、修改和分发**源代码**，但分发修改版或二进制版时，必须保留版权声明与许可证，并提供对应的完整源代码。
 
-> 注意：Among Us、Innersloth LLC 的素材、第三方项目代码/素材、画师作品等不适用本项目的 GPL 授权，其版权与许可归各自权利人所有。
+### 美术资源许可例外
+
+本项目中的**原创美术资源**，包括但不限于 `Image/`、`Images/`、`Resources/`、`Resource/` 目录下的图片、图标、立绘、UI、特效、模型、音频等，以及画师作品，**不属于 GPL-3.0 授权范围，不遵守 GPL 协议**。
+
+除非文件或目录中另有说明，这些美术资源版权归 Moon-Scar Studio 及/或原画师所有，**保留所有权利（All Rights Reserved）**。未经版权所有者书面许可，不得复制、修改、分发、商用或用于其他项目。详见 [LICENSE-ASSETS](./LICENSE-ASSETS)。
+
+第三方素材、Among Us / Innersloth LLC 的素材、第三方项目代码/素材，其版权与许可归各自权利人所有，不适用本项目的 GPL 授权。
  
