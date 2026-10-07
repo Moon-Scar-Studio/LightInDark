@@ -45,6 +45,12 @@ public class Caller : RoleTemplate
             {
                 if (!AmOwner) return;
 
+                // ★ 先规整底层的原版职业（用户 2026-10-06 报的三个 Bug 的共同根因）：
+                //   不换掉底层职业的话，原版技能职业（Engineer/Tracker/…）会**继续每帧**
+                //   驱动 HudManager.AbilityButton 画它自己那套冷却（SetFillUp = 最后三秒才出现）
+                //   → 与我们自己的按钮形成两套计时 ✗ 详见 RuntimeRoleTemplate.NormalizeVanillaRole
+                NormalizeVanillaRole();
+
                 // 普通按钮：主持人技能（秒会议）
                 AbilityButtonFactory.Create(this, new RoleButtonConfig()
                     .SetLabelKey("Button.Caller.label")

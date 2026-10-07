@@ -128,25 +128,61 @@ namespace LightInDark.Roles
                 {
                     if (player?.Control == null) continue;
                     if (player != target)
-                    {
-                        var rend = player.Control.cosmetics.currentBodySprite.BodySprite;
-                        if (rend != null) rend.material.SetFloat("_Outline", 0f);
-                    }
+                        SetOutline(player.Control, 0f, default);
                 }
 
                 if (target?.Control != null)
-                {
-                    var rend = target.Control.cosmetics.currentBodySprite.BodySprite;
-                    if (rend != null)
-                    {
-                        rend.material.SetFloat("_Outline", 1f);
-                        rend.material.SetColor("_OutlineColor", HighlightColor.ToUnityColor());
-                    }
-                }
+                    SetOutline(target.Control, 1f, HighlightColor.ToUnityColor());
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("PlayerTracker.HighlightTarget", ex);
+            }
+        }
+
+        /// <summary>
+        /// 给一个玩家写轮廓（开/关）。
+        ///
+        /// ⚠️⚠️ 必须**连 `LongModeParts` 一起写**（用户 2026-10-06 报的「追踪器不显示」的一条确证原因）：
+        ///   原版 `CosmeticsLayer.SetOutline`（19.0 `CosmeticsLayer.cs:817-834`）除了 `BodySprite`，
+        ///   还会循环 `currentBodySprite.LongModeParts` 的**每个元素**写同一组属性 ✓
+        ///   "长身模式"（如 Fungle 的蛇形皮肤）和一部分皮肤的身体分段**画在那些渲染器上**，
+        ///   只写 `BodySprite` 的话它们**不会亮** ✗ —— 看起来就是"追踪器没显示/只有一截亮" ✓
+        ///
+        /// ⚠️ 属性名是对的（`_Outline` / `_OutlineColor`，见 `CosmeticsLayer.cs:819/827`），
+        ///    不要改成别的名字 ✓
+        /// </summary>
+        private static void SetOutline(PlayerControl control, float outline, UnityEngine.Color color)
+        {
+            try
+            {
+                var cosmetics = control.cosmetics;
+                if (cosmetics == null) return;
+
+                var body = cosmetics.currentBodySprite;
+                if (body == null) return;
+
+                var main = body.BodySprite;
+                if (main != null && main.material != null)
+                {
+                    main.material.SetFloat("_Outline", outline);
+                    if (outline > 0f) main.material.SetColor("_OutlineColor", color);
+                }
+
+                var longParts = body.LongModeParts;
+                if (longParts == null) return;
+
+                for (int i = 0; i < longParts.Length; i++)
+                {
+                    var part = longParts[i];
+                    if (part == null || part.material == null) continue;
+                    part.material.SetFloat("_Outline", outline);
+                    if (outline > 0f) part.material.SetColor("_OutlineColor", color);
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[PlayerTracker.SetOutline] {ex.Message}");
             }
         }
 

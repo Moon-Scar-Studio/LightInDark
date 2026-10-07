@@ -96,6 +96,11 @@ namespace LightInDark.UI.Ability
         {
             try
             {
+                // ★ 先压住原版技能按钮（用户 2026-10-06 报的三个 Bug 的共同根因之一）：
+                //   原版技能职业每帧驱动 HudManager.AbilityButton，`SetHudActive` 还会把它重新显示 ✗
+                //   本地玩家有自定义职业时就不该看到它（没自定义职业时不动它 → 保持原版行为 ✓）
+                SuppressVanillaAbilityButtons();
+
                 for (int i = _buttons.Count - 1; i >= 0; i--)
                 {
                     var b = _buttons[i];
@@ -108,6 +113,42 @@ namespace LightInDark.UI.Ability
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[RoleButtonManager.UpdateAll] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 本地玩家有自定义职业时，把**原版**技能按钮（主 / 副）藏起来。
+        ///
+        /// ⚠️ 为什么需要（用户 2026-10-06："装填动画错误 / 管道里能走 CD / 追踪器不显示"）：
+        ///   原版职业代码在**每帧**驱动 `HudManager.Instance.AbilityButton`
+        ///   （`EngineerRole.cs:119/145` 的 `SetCoolDown`、`:131/153` 的 `SetFillUp(ventTime)`、
+        ///     `TrackerRole.cs:174/222` 的 `SetFillUp` …），而 `SetFillUp` 的表现正是
+        ///     **「平时不显示 → 最后 3 秒才出现 → 很快填满」**（`ActionButton.cs:82-97`）✓
+        ///   → 只要它还在显示，玩家就会同时看到**两套计时**✗
+        ///
+        /// ⚠️ 与 `RuntimeRoleTemplate.NormalizeVanillaRole()` 是**互补**的两道防线：
+        ///   那条从源头换掉底层职业（治本）；这条兜住"换之前 / 换失败 / 原版又把它显示出来"的情况 ✓
+        /// ⚠️ 只在**状态真的不对**时才写（`activeSelf` 判断）→ 不是每帧盲写，符合 §4.4 的规矩 ✓
+        /// </summary>
+        public static void SuppressVanillaAbilityButtons()
+        {
+            try
+            {
+                var local = LightInDark.Game.GameManager.Instance.LocalPlayer;
+                if (local?.Role == null) return;          // 没有自定义职业 → 原版按钮照常显示 ✓
+
+                var hud = HudManager.Instance;
+                if (hud == null) return;
+
+                var main = hud.AbilityButton;
+                if (main != null && main.gameObject.activeSelf) main.gameObject.SetActive(false);
+
+                var secondary = hud.SecondaryAbilityButton;
+                if (secondary != null && secondary.gameObject.activeSelf) secondary.gameObject.SetActive(false);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RoleButtonManager.SuppressVanillaAbilityButtons] {ex.Message}");
             }
         }
 
@@ -230,6 +271,11 @@ namespace LightInDark.UI.Ability
             try
             {
                 RoleButtonManager.SetAllVisible(isActive);
+
+                // ★ 原版 `SetHudActive` 里会 `AbilityButton.ToggleVisible(isActive)`（HudManager.cs:175/179）
+                //   把原版技能按钮**重新显示**出来 ✗ —— 本地玩家有自定义职业时必须再压回去，
+                //   否则玩家会同时看到"原版那套 SetFillUp 计时"和我们自己的按钮（两套计时 ✗）
+                if (isActive) RoleButtonManager.SuppressVanillaAbilityButtons();
             }
             catch (System.Exception)
             {

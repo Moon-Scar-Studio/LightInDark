@@ -166,7 +166,29 @@ namespace LightInDark.Roles
         /// <summary>能否被分配机随机分配（false = 仅作兜底/手动指定）。</summary>
         public virtual bool CanBeAssigned => true;
 
-        /// <summary>任务数量（由原版游戏设置传入的占位值）。</summary>
+        /// <summary>
+        /// **这个职业的任务数量**（用户 2026-10-06 要求：职业可以覆写，而且可以**动态**）。
+        ///
+        /// ⚠️ 默认值 1 = **不干预**：保持原版按游戏选项发出来的数量 ✓
+        ///    （判定见 `RoleTaskCountPatch`：`TaskCount == 1` 时一行都不改 → 纯增量 ✓）
+        ///
+        /// 覆写示例（数量可以随配置/局内状态变 ✓）：
+        /// <code>
+        ///   // 固定 5 个
+        ///   public override int TaskCount => 5;
+        ///
+        ///   // 跟着配置项走（配置界面里能改）
+        ///   public override int TaskCount =>
+        ///       LightInDark.Configuration.ConfigRegistry.Get("role.mayor.tasks")?.GetInt() ?? 3;
+        ///
+        ///   // 跟着局内状态走
+        ///   public override int TaskCount => MyPlayer.IsDead ? 0 : 4;
+        /// </code>
+        ///
+        /// ⚠️ 落地时机是 **`ShipStatus.Begin` 发任务表的时候**（`NetworkedPlayerInfo.RpcSetTasks` 的 Prefix）——
+        ///    所以它在**每次开局**都会重新读一遍本属性 ✓（不是只读一次）
+        /// ⚠️ 变多时只能从**地图任务池里没用过的 Index** 里补 ✓（池子不够就补到够为止并打 warning ✓）
+        /// </summary>
         public virtual int TaskCount => 1;
 
         /// <summary>能否报告尸体（硬编码能力，不可被设置更改）。</summary>

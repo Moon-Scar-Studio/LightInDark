@@ -192,6 +192,7 @@ namespace LightInDark.UI.Ability
 
                 UpdateVisibility();
                 UpdateUsability();
+                UpdateCooldownDisplay();     // ★ 效果期间也要刷新进度环（见下面的覆写）
 
                 // ⚠️⚠️ §4.4「两边打架」：`base.UpdateUsability()` → `ActionButton.SetEnabled()`
                 //    会写 `buttonLabelText.color`（原版行为）→ **把 StartEffect 里设的绿色冲掉**，
@@ -205,6 +206,44 @@ namespace LightInDark.UI.Ability
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[EffectButton.Update] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 效果进行中：进度环显示**效果剩余时长**（对齐 Nebula 的 `CurrentTimer` 语义 —— 效果计时优先，冷却其次）。
+        ///
+        /// ⚠️ 用户 2026-10-06 报的"装填动画错误"的另一半：
+        ///   原来效果期间走的是本类自己的分支、**根本不调 `base.Update()`** →
+        ///   `UpdateCooldownDisplay()` 压根不执行 → 进度环**冻结在效果开始那一刻** ✗
+        ///   （而且 `_cooldownTimer` 也是停的 → 看起来就是"动画卡住了"）
+        ///
+        /// ⚠️ 这里**只写进度环**（`SetCooldownFill`），倒计时数字继续沿用本类既有的 `buttonLabelText` 写法 ✓
+        ///    —— 若改用 `SetCoolDown`，它会顺手点亮 `cooldownTimerText`，
+        ///       那就会**同时出现两个数字** ✗
+        /// </summary>
+        protected override void UpdateCooldownDisplay()
+        {
+            try
+            {
+                if (!_inEffect || EffectDuration <= 0f)
+                {
+                    base.UpdateCooldownDisplay();
+                    return;
+                }
+
+                var action = Button;
+                if (action == null) return;
+
+                float remain = _effectTimer;
+                if (remain < 0f) remain = 0f;
+                if (remain > EffectDuration) remain = EffectDuration;
+
+                // 与 `ActionButton.SetCoolDown` 同一个公式：fill = 剩余 / 总时长（ActionButton.cs:54）
+                action.SetCooldownFill(remain / EffectDuration);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[EffectButton.UpdateCooldownDisplay] {ex.Message}");
             }
         }
 

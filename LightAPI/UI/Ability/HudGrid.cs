@@ -112,6 +112,20 @@ namespace LightInDark.UI.Ability
 
         private void Layout()
         {
+            // ★ 第 5 批：小 HUD → 整个按钮阵缩放（**只在档位变化时写一次**，避免每帧写 transform，§4.4）
+            //   ⚠️ HudGrid 本身不是 MonoBehaviour（每帧由 HudGridTicker 驱动），
+            //      所以要缩的是它保存的 `_holder`（= `UseButton.transform.parent` ✓）
+            try
+            {
+                float want = HudContent.SmallHud ? HudContent.SmallHudScale : 1f;
+                if (_holder != null && Mathf.Abs(_holder.localScale.x - want) > 0.001f)
+                {
+                    _holder.localScale = new Vector3(want, want, 1f);
+                    LightInDark.Core.LightLogger.Log($"[HudGrid] 小 HUD={(HudContent.SmallHud ? "开" : "关")} → 按钮阵缩放 {want:0.##}");
+                }
+            }
+            catch { }
+
             for (int side = 0; side < _contents.Length; side++)
             {
                 var list = _contents[side];
@@ -254,12 +268,75 @@ namespace LightInDark.UI.Ability
 
         public bool IsActiveInHierarchy => _gameObject != null && _gameObject.activeInHierarchy;
 
-        private static float EdgeRight => 3f * Screen.width / Screen.height - 0.8f;
+        // =====================================================================
+        //  第 5 批：**按钮自动排版优化**（用户 2026-10-06 点名的"自己的特色"）
+        //  照抄 Nebula 的两项（`NebulaPluginNova\Modules\HudGrid.cs`）：
+        //    ① 小 HUD：整个按钮阵缩到 0.72 倍 + 换一套边距公式（Nebula :55-66 / :210-226）
+        //    ② 排列档位：把按钮整体/左侧一列抬高 0.85（Nebula :234-235）
+        //  ⚠️ 两者都由**配置项**驱动，**默认关闭/0 档 = 与改动前逐字节一致** ✓（纯增量）
+        // =====================================================================
+
+        /// <summary>小 HUD 时的整体缩放（与 Nebula 一致 = 0.72）。</summary>
+        internal const float SmallHudScale = 0.72f;
+
+        /// <summary>排列档位带来的抬高量（与 Nebula 一致 = 0.85）。</summary>
+        internal const float ArrangementRaiseY = 0.85f;
+
+        /// <summary>是否启用"小 HUD"布局（配置 `lid.hud.smallGrid`，默认 false ✓）。</summary>
+        internal static bool SmallHud
+        {
+            get
+            {
+                try { return LightInDark.Configuration.ConfigRegistry.Get("lid.hud.smallGrid")?.GetBool() ?? false; }
+                catch { return false; }
+            }
+        }
+
+        /// <summary>按钮排列档位（配置 `lid.hud.buttonArrangement`：0=默认 1=只抬高左侧 2=全部抬高 ✓）。</summary>
+        internal static int Arrangement
+        {
+            get
+            {
+                try
+                {
+                    int v = LightInDark.Configuration.ConfigRegistry.Get("lid.hud.buttonArrangement")?.GetInt() ?? 0;
+                    if (v < 0) return 0;
+                    return v > 2 ? 2 : v;
+                }
+                catch { return 0; }
+            }
+        }
+
+        /// <summary>
+        /// 右边距（Nebula `HudContent.EdgeX` 的等价物）。
+        /// ★ 第 5 批：加了**小 HUD** 分支 —— 用户开了"小 HUD"时整个按钮阵会缩到 0.72 倍，
+        ///   边距也必须跟着换公式，否则缩完之后会飘到屏幕外（Nebula `HudGrid.cs:210-226`）✓
+        /// </summary>
+        private static float EdgeRight => SmallHud
+            ? (3.0f / SmallHudScale) * Screen.width / Screen.height - 0.67f
+            : 3f * Screen.width / Screen.height - 0.8f;
+
+        /// <summary>下边距（Nebula `HudContent.EdgeY` 的等价物，普通 HUD = -2.3f ✓）。</summary>
+        private static float EdgeBottom => SmallHud
+            ? -(3.0f / SmallHudScale - 0.65f)
+            : -2.3f;
 
         public Vector3 TargetLocalPos => new Vector3(
             (EdgeRight - CurrentPos.x) * (IsLeftSide ? -1f : 1f),
-            -2.3f + CurrentPos.y,
+            EdgeBottom + CurrentPos.y + ArrangementOffsetY,
             CurrentPos.x * 0.05f);
+
+        /// <summary>按钮排列档位带来的整体抬高量（0 = 不动 ✓ 默认）。</summary>
+        private float ArrangementOffsetY
+        {
+            get
+            {
+                if (Arrangement == 0) return 0f;
+                if (MeetingHud.Instance != null) return 0f;        // 会议里不抬高（原版布局优先）✓
+                if (Arrangement == 2) return ArrangementRaiseY;    // 全部抬高
+                return IsLeftSide ? ArrangementRaiseY : 0f;        // 只抬高左侧那一列
+            }
+        }
 
         public HudContent SetPriority(int priority)
         {

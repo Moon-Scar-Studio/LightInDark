@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using LightInDark.Configuration;
 using LightInDark.Core;
@@ -171,6 +171,55 @@ namespace LightInDark.Roles
 
         /// <summary>会议结束时。</summary>
         protected virtual void OnMeetingEnded(Events.MeetingEndEvent e) { }
+
+        /// <summary>
+        /// 把**底层的原版职业**规整成一个"没有技能"的底色职业（Crewmate / Impostor）。
+        ///
+        /// ⚠️⚠️ 为什么每个自定义职业都必须做这件事（用户 2026-10-06 报的三个 Bug 的**共同根因**）：
+        ///
+        ///   原版每个技能职业都在**每帧**驱动 `HudManager.Instance.AbilityButton`：
+        ///   <code>
+        ///     EngineerRole.cs:119/145   AbilityButton.SetCoolDown(自己的冷却, ...)
+        ///     EngineerRole.cs:131/153   AbilityButton.SetFillUp(ventTime, ventTime)      ← 通风管那套
+        ///     TrackerRole.cs:174/222    AbilityButton.SetFillUp(...)                     ← "追踪器"
+        ///     Phantom / Shapeshifter / Scientist / Detective / GuardianAngel / SpiritGuide 同理
+        ///   </code>
+        ///   而 `HudManager.SetHudActive` 里还有 `AbilityButton.ToggleVisible(isActive)`（HudManager.cs:175/179）
+        ///   会把那个按钮**重新显示**出来 ✗
+        ///
+        ///   → 若我们给玩家叠了自定义职业、却**没换掉底层的原版职业**，原版那套能力就会继续跑：
+        ///     它用自己的计时画自己的冷却，而 `SetFillUp` 的表现正是
+        ///     **「平时不显示 → 最后 3 秒才出现 → 很快填满」**（ActionButton.cs:82-97）✓
+        ///     —— 与我们的按钮形成**两套计时**，就是用户看到的
+        ///     「装填动画错误 / 管道里能走 CD / 追踪器不显示」✓
+        ///
+        ///   `Crewmate` / `Impostor` / `BloodthirstyKiller` 本来就做了这件事，
+        ///   但 `Caller` / `Jackal` / `Sidekick` **漏了** ✗ —— 这里在基类提供统一入口。
+        ///
+        /// ⚠️ 中立职业传 `false`（底层给 Crewmate）：这样 `PlayerControl.Data.Role.IsImpostor` 仍为 false ✓
+        ///    不会被算进 `RoleUtils.AliveImpostors()` 那类判定里 ✓
+        ///    （它们的能力由我们自己的按钮 + `CanKill`/`CanUseVents` + `RoleVentPatch` 提供 ✓）
+        /// </summary>
+        /// <param name="asImpostor">true 时底层给原版内鬼（仅用于"内鬼阵营"的自定义职业）。</param>
+        protected void NormalizeVanillaRole(bool asImpostor = false)
+        {
+            try
+            {
+                var control = MyPlayer?.Control;
+                if (control == null) return;
+
+                var manager = RoleManager.Instance;
+                if (manager == null) return;
+
+                manager.SetRole(control, asImpostor
+                    ? AmongUs.GameOptions.RoleTypes.Impostor
+                    : AmongUs.GameOptions.RoleTypes.Crewmate);
+            }
+            catch (System.Exception ex)
+            {
+                LightLogger.LogWarning($"[RuntimeRole] {CodeName} 规整原版职业失败: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// **职业数据位变化时**（对齐 Nebula `Role.OnUpdateRoleData(int dataId, int newValue)`）。

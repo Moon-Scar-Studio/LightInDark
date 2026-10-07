@@ -100,13 +100,45 @@ namespace LightInDark.UI.Ability
         protected void ApplyConfig()
         {
             if (_actionButton == null) return;
-            if (_config.Icon != null) _actionButton.graphic.sprite = _config.Icon;
+            ApplyIcon(_config.Icon);
             string label = _config.ResolvedLabel;
             if (!string.IsNullOrEmpty(label)) _actionButton.OverrideText(label);
             if (_config.Cooldown > 0f)
             {
                 // 初始为满冷却遮罩（数字+进度由 UpdateCooldownDisplay 每帧驱动）
                 _actionButton.SetCoolDown(_config.Cooldown, _config.Cooldown);
+            }
+        }
+
+        /// <summary>
+        /// 换图标 + **重算冷却遮罩的 UV 包围盒**（两件事必须成对做）。
+        ///
+        /// ⚠️⚠️ 这是用户 2026-10-06 报的「装填动画错误」的**根因**：
+        ///   原版冷却遮罩不是一个矩形贴图，而是往 <c>graphic.material</c> 写**两个** shader 属性算出来的：
+        ///   <code>
+        ///     ActionButton.SetCooldownFill(p)  → material.SetFloat("_Percent", p)            // ActionButton.cs:143-146
+        ///     CooldownHelpers.SetCooldownNormalizedUvs(sr)
+        ///         → material.SetVector("_NormalizedUvs", 该 sprite 的 uv 包围盒)               // CooldownHelpers.cs:8-39
+        ///   </code>
+        ///   遮罩是"按**当前 sprite 的 UV 包围盒**"算的 ✓ → **换图就必须重算** ✓
+        ///   原版每处换图都跟着调：`AbilityButton.SetFromSettings`(:51-52/:60-61)、
+        ///   `UseButton.SetFromSettings`(:85-86)、`KillButton.ResetKillButton`(:69/84/92) ✓
+        ///
+        ///   而本工程原来只写 `graphic.sprite = _config.Icon`、**从不重算 `_NormalizedUvs`**
+        ///   （全工程 grep 零命中）✗ → shader 拿"新图标的真实 uv"去套"旧图标的 uv 包围盒"
+        ///   → 遮罩算到按钮外面 → 看起来就是"装填动画完全是坏的" ✗
+        /// </summary>
+        protected void ApplyIcon(UnityEngine.Sprite icon)
+        {
+            if (_actionButton == null || icon == null) return;
+            try
+            {
+                _actionButton.graphic.sprite = icon;
+                _actionButton.graphic.SetCooldownNormalizedUvs();   // ★ 换图后必须重算（见上）
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[AbilityButton.ApplyIcon] 换图标失败: {ex.Message}");
             }
         }
 

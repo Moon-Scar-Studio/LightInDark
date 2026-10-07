@@ -22,6 +22,55 @@ namespace LightInDark.Utilities;
 /// </summary>
 public static class LightUtils
 {
+    #region 任务数量
+
+    /// <summary>
+    /// 取某个玩家**当前的任务数量**（默认取本地玩家）。
+    ///
+    /// 用途：职业想按"现在的任务数"做判断时用（例如"任务做完了给奖励"、
+    /// "每完成一个任务获得 X"、技能强度随任务数变化…）。
+    ///
+    /// ⚠️ 任务表是在 **`ShipStatus.Begin`** 里发的（`ShipStatus.cs:421 RpcSetTasks`），
+    ///    所以大厅/选人阶段读到的会是 0 ✓（那时候还没发任务）。
+    ///
+    /// ⚠️ `countOnlyProgress` 的含义：中立/特殊职业的 <c>Data.TasksCountTowardProgress</c> 会被我们置成 false
+    ///    （见 `RpcDefinitions.ApplyRole`）——那种玩家的任务**不计入团队进度**，
+    ///    如果你想问"还差几个任务才算赢"，要用 `countOnlyProgress: true` ✓
+    /// </summary>
+    /// <param name="player">目标玩家；null = 本地玩家</param>
+    /// <param name="countOnlyProgress">true 时只在"计入进度"时才算（默认 false = 全部任务）</param>
+    public static int GetCurrentTaskCount(PlayerControl player = null, bool countOnlyProgress = false)
+    {
+        try
+        {
+            var pc = player;
+            if (pc == null) pc = PlayerControl.LocalPlayer;      // == 走 UnityEngine.Object 重载（AGENTS §4.6.1）
+            if (pc == null) return 0;
+
+            var data = pc.Data;
+            if (data == null) return 0;
+
+            if (countOnlyProgress)
+            {
+                // ⚠️ `TasksCountTowardProgress` 在 **RoleBehaviour** 上（不是 NetworkedPlayerInfo）——
+                //    我们给中立职业置 false 的那一处就是这么写的（RpcDefinitions.ApplyRole）
+                var role = data.Role;
+                if (role == null || !role.TasksCountTowardProgress) return 0;
+            }
+
+            var tasks = data.Tasks;
+            if (tasks == null) return 0;
+            return tasks.Count;
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[LightUtils.GetCurrentTaskCount] {ex.Message}");
+            return 0;
+        }
+    }
+
+    #endregion
+
     #region AttachComponent
     /// <summary>
     /// 将任意组件类挂到 GameObject 上。

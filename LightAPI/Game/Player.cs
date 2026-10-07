@@ -151,7 +151,11 @@ namespace LightInDark.Game
                 runtime?.Activate();
 
                 EventTriggers.OnRoleAssigned(Control, newRole, arguments);
-                RpcDefinitions.SetRole(Control.PlayerId, newRole.Id, arguments);
+
+                // ★ 审查 A3：**按 CodeName 下发**（不再用 `newRole.Id`）——
+                //   Id 是按注册顺序发的号，两端顺序/数量有差别就会整体错位 → 静默发错职业 ✗
+                //   CodeName 是职业自己声明的稳定字符串 ✓ 协议层从此不会再发错职业 ✓
+                RpcDefinitions.SetRoleByCode(Control.PlayerId, newRole.CodeName, arguments);
 
                 Core.LightLogger.Log($"[Player] {Name} → {newRole.Name}");
             }

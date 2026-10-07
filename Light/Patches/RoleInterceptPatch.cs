@@ -136,6 +136,13 @@ namespace Light.Patches
                 }
 
                 LightLogger.Log("[Patch] 原版分配完成，开始自定义职业分配");
+
+                // ★★ 把原版随机出来的**技能职业一律降级为底色职业**（用户 2026-10-06 要求：
+                //    "原版职业完全不分配，全权交给我们接管"）—— 见方法注释里的完整理由。
+                //    ⚠️ 必须放在下面"分阵营"之前/之后都行（它**保持 IsImpostor 不变** ✓），
+                //       这里放在前面，让后续所有逻辑看到的都是干净的 Crewmate/Impostor ✓
+                DowngradeVanillaSpecialRoles();
+
                 EventTriggers.OnRoleSelectionBegin(PlayerControl.AllPlayerControls?.Count ?? 0);
 
                 var impostors = new List<byte>();
@@ -173,11 +180,217 @@ namespace Light.Patches
                 LightLogger.LogError("[RoleSelectPatch.Postfix]", ex);
             }
         }
+
+        /// <summary>
+        /// 把原版随机出来的**技能职业**全部降级成底色职业（Crewmate / Impostor），**阵营保持不变**。
+        ///
+        /// ═══════════════════════════════════════════════════════════════════════
+        /// 【为什么需要】（用户 2026-10-06："原版职业完全不分配，全权交给我们接管"）
+        ///
+        ///   原版这些技能职业**每帧驱动 `HudManager.Instance.AbilityButton`**：
+        ///     EngineerRole.cs:119/145  SetCoolDown        :131/153  SetFillUp(ventTime)
+        ///     TrackerRole.cs:174/222   SetFillUp           ← "追踪器"
+        ///     Phantom / Shapeshifter / Scientist / Detective / GuardianAngel / SpiritGuide 同理
+        ///   而 `HudManager.SetHudActive` 还会 `AbilityButton.ToggleVisible(isActive)` 把它重新显示（HudManager.cs:175/179）
+        ///   → 只要有人身上还挂着原版技能职业，那套能力就会继续跑、继续画自己的冷却
+        ///     （`SetFillUp` 的表现正是「平时不显示 → 最后 3 秒才出现 → 很快填满」）
+        ///     → 与我们的按钮形成**两套计时** = 用户报的「装填动画错误 / 管道里能走 CD / 追踪器不显示」✗
+        ///
+        ///   我们自己的框架已经**完全覆盖**了这些能力：
+        ///     击杀 = `CanKill` + `AbilityButtonFactory.CreateKill`
+        ///     钻管道 = `CanUseVents` + `RoleVentPatch`
+        ///     其它技能 = 各自的 `RoleButtonConfig`
+        ///   → 所以原版技能职业对本模组**没有任何用处，只有副作用** ✓
+        ///
+        /// 【为什么用"覆写"而不是"Prefix return false 不跑原版"】
+        ///   `RoleManager.SelectRoles`（19.0 L70-92）虽然只有 20 行，但它负责
+        ///   收集名单（过滤断线/死亡 + 假人）→ `GetAdjustedNumImpostors` → 两次 `AssignRolesForTeam`
+        ///   （后者内部会 **广播 `RpcSetRole`**、按人数配比内鬼）。
+        ///   完全不跑 = 这些都要自己补（人数配比/广播/任务表），风险明显更大 ✗
+        ///   而本方法**保留原版整套流程**，只把"随机出来的具体职业"抹平成底色职业 ✓
+        ///   → 效果与用户的诉求一致（原版技能职业一个都不会存在），风险却低得多 ✓
+        ///
+        /// ⚠️ `IsImpostor`（= `Data.Role.Role` 是否内鬼方）**必须保持不变** ✓：
+        ///    内鬼方的技能职业（Shapeshifter/Phantom）降级为 `RoleTypes.Impostor`，
+        ///    船員方的（Engineer/Tracker/Scientist/Detective/Noisemaker…）降级为 `RoleTypes.Crewmate`
+        ///    → 击杀按钮/破坏/胜负/名字颜色全部不受影响 ✓
+        /// ⚠️ 必须在**主机**执行（只在这里跑 ✓），并且用 `RpcSetRole` 广播给所有客户端 ✓
+        /// ═══════════════════════════════════════════════════════════════════════
+        /// </summary>
+        private static void DowngradeVanillaSpecialRoles()
+        {
+            int changed = 0;
+            try
+            {
+                foreach (var pc in PlayerControl.AllPlayerControls)
+                {
+                    try
+                    {
+                        if (pc == null) continue;
+                        // §4.6.1：Unity 对象用显式判空，别用 ?.
+                        if (pc.Data == null) continue;
+                        var role = pc.Data.Role;
+                        if (role == null) continue;
+
+                        var current = role.Role;                 // 原版 RoleTypes（Engineer/Tracker/…）
+                        bool impostorSide = role.IsImpostor;     // 阵营：必须保持
+
+                        var target = impostorSide ? RoleTypes.Impostor : RoleTypes.Crewmate;
+                        if (current == target) continue;         // 已经是底色职业 → 不动
+
+                        pc.RpcSetRole(target, false);            // 广播（主机本地也会生效）
+                        changed++;
+                        LightLogger.Log($"[Patch] 原版职业降级：{pc.name} {current} → {target}" +
+                                        $"（阵营={(impostorSide ? "内鬼" : "船员")} 保持不变）");
+                    }
+                    catch (Exception ex)
+                    {
+                        LightLogger.LogWarning($"[Patch] 降级原版职业失败：{ex.Message}");
+                    }
+                }
+
+                if (changed > 0)
+                    LightLogger.Log($"[Patch] 已把 {changed} 个原版技能职业降级为底色职业 → 原版能力不再干扰我们的按钮 ✓");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("[Patch] DowngradeVanillaSpecialRoles", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// **完全接管原版职业分配**（方案 B，用户 2026-10-06 要求"原版职业完全不分配，全权交给我们接管"）。
+    ///
+    /// 做法：`RoleManager.SelectRoles` 的 **Prefix 返回 false** → 原版那 20 行（19.0 L70-92）整个不跑，
+    /// 我们自己按原版同样的规则发**底色职业**（只有 Impostor / Crewmate 两种），
+    /// 然后 `RoleSelectPatch.Postfix` 照常叠我们的自定义职业 ✓
+    /// （Harmony：Prefix 返回 false 只跳过原方法，**Postfix 仍会执行** ✓ 所以不用改那边的结构）
+    ///
+    /// ═══════════════════════════════════════════════════════════════════════
+    /// 【为什么要这样写 —— 两个从原版源码里挖出来的坑】
+    ///
+    /// ① **不能直接用 `PlayerControl.RpcSetRole` 做第一次赋值** ✗
+    ///    `RpcSetRole`(PlayerControl.cs:2449-2458) 第一行就是 `this.Data.Role.OnRoleSet()` ——
+    ///    直接解引用 `Data.Role`。而跳过 `SelectRoles` 之后 `Data.Role` **还是 null** → **NRE** ✗
+    ///    → 所以先调 `RoleManager.Instance.SetRole(pc, type)`：它内部是
+    ///      `if (data.Role) { Deinitialize + Destroy }` → `Instantiate(AllRoles.First(...))` → `Initialize`
+    ///      → **能处理 null，且同步生效** ✓（RoleManager.cs:32-55）
+    ///
+    /// ② **本地状态不是立刻生效的** ✗
+    ///    `RpcSetRole` 的本地路径是 `StartCoroutine(CoSetRole(...))`（异步协程）✗
+    ///    而我们的 `RoleSelectPatch.Postfix` 紧接着就要读 `IsImpostor` 来分阵营
+    ///    → 若只调 `RpcSetRole`，Postfix 会读到**旧值**，阵营分配直接错 ✗
+    ///    → 所以 `RoleManager.SetRole`（同步 ✓）负责本地，`RpcSetRole` 只负责**广播**给其它客户端 ✓
+    ///      （重复应用同一个职业是无害的：就是销毁再建一个同类型的 RoleBehaviour ✓）
+    ///
+    /// 【为什么任务不受影响】✓
+    ///    任务是在 `ShipStatus.Begin` 里发的（`ShipStatus.cs:421  networkedPlayerInfo.RpcSetTasks(array)`），
+    ///    与 `SelectRoles` **完全无关** ✓ → 跳过它不会让任何人没任务 ✓
+    ///
+    /// ⚠️ 非普通模式（HnS 等）**不拦**，交给原版 ✓（与我们 Postfix 里的模式闸门一致 ✓）
+    /// ⚠️ 任何异常都 `return true` **退回原版** ✓（安全方向：宁可原版跑，也别开不出局 ✗）
+    /// ═══════════════════════════════════════════════════════════════════════
+    /// </summary>
+    [HarmonyPatch(typeof(RoleManager), nameof(RoleManager.SelectRoles))]
+    public static class VanillaSelectRolesBlockPatch
+    {
+        private static readonly System.Random Rng = new();
+
+        /// <summary>返回 false = 不跑原版 SelectRoles（我们自己发底色职业）。</summary>
+        public static bool Prefix()
+        {
+            try
+            {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return true;
+
+                // 只在普通模式接管（HnS 等让原版自己来）
+                try
+                {
+                    var mode = GameOptionsManager.Instance.CurrentGameOptions.GameMode;
+                    if (mode != GameModes.Normal) return true;
+                }
+                catch { return true; }
+
+                AssignBaseRoles();
+                return false;      // ★ 跳过原版；Postfix（我们的自定义分配）仍会执行 ✓
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("[VanillaSelectRolesBlockPatch] 接管失败 → 退回原版", ex);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 按原版同样的规则发**底色职业**：收集名单（滤断线/死亡 + 假人）→ 内鬼数量 → 随机挑人。
+        /// 只有 `RoleTypes.Impostor` / `RoleTypes.Crewmate` 两种，**绝不发技能职业** ✓
+        /// </summary>
+        private static void AssignBaseRoles()
+        {
+            // ── 1. 名单（照抄 RoleManager.SelectRoles L72-86 的取法，避免漏人）──
+            var players = new List<PlayerControl>();
+            foreach (var pc in PlayerControl.AllPlayerControls)
+            {
+                if (pc == null || pc.Data == null) continue;
+                if (pc.Data.Disconnected || pc.Data.IsDead) continue;
+                players.Add(pc);
+            }
+            players.Sort((a, b) => a.PlayerId.CompareTo(b.PlayerId));     // 原版按 ClientData.Id 排序，这里等价地保证确定性
+
+            // 假人（原版会额外从 GameData.AllPlayers 里补 dummy）
+            try
+            {
+                foreach (var info in GameData.Instance.AllPlayers)
+                {
+                    var obj = info?.Object;
+                    if (obj == null || !obj.isDummy) continue;
+                    if (players.Contains(obj)) continue;
+                    players.Add(obj);
+                }
+            }
+            catch { }
+
+            if (players.Count == 0)
+            {
+                LightLogger.LogWarning("[Patch] 接管分配：名单为空 → 让原版处理");
+                throw new InvalidOperationException("名单为空");
+            }
+
+            // ── 2. 内鬼数量：用原版同一个入口（含人数配比与房主设置）──
+            int wanted = GameOptionsManager.Instance.CurrentGameOptions.GetAdjustedNumImpostors(players.Count);
+            if (wanted < 0) wanted = 0;
+            if (wanted > players.Count) wanted = players.Count;
+
+            // ── 3. 随机挑内鬼（原版也是随机）──
+            var order = players.OrderBy(_ => Rng.Next()).ToList();
+            var impostors = new HashSet<byte>();
+            for (int i = 0; i < wanted; i++) impostors.Add(order[i].PlayerId);
+
+            // ── 4. 落地：先同步写本地，再广播 ──
+            int imp = 0, crew = 0;
+            foreach (var pc in order)
+            {
+                var type = impostors.Contains(pc.PlayerId)
+                    ? AmongUs.GameOptions.RoleTypes.Impostor
+                    : AmongUs.GameOptions.RoleTypes.Crewmate;
+
+                try { RoleManager.Instance.SetRole(pc, type); }        // ★ 同步（能处理 Data.Role == null）
+                catch (Exception ex) { LightLogger.LogWarning($"[Patch] SetRole 失败 {pc.name}: {ex.Message}"); }
+
+                try { pc.RpcSetRole(type, false); }                    // ★ 广播（此时 Data.Role 已存在 → 不会 NRE）
+                catch (Exception ex) { LightLogger.LogWarning($"[Patch] RpcSetRole 失败 {pc.name}: {ex.Message}"); }
+
+                if (type == AmongUs.GameOptions.RoleTypes.Impostor) imp++; else crew++;
+            }
+
+            LightLogger.Log($"[Patch] 已接管原版分配：共 {order.Count} 人 → 内鬼 {imp} / 船员 {crew}" +
+                            $"（**只发底色职业，原版技能职业一个都不会出现** ✓）");
+        }
     }
 
     [HarmonyPatch(typeof(RoleManager), nameof(RoleManager.AssignRoleOnDeath))]
-    public static class BlockGhostRolePatch
-    {
+    public static class BlockGhostRolePatch    {
         public static bool Prefix()
         {
             try

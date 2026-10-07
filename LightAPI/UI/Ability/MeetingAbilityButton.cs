@@ -122,7 +122,14 @@ namespace LightInDark.UI.Ability
         private void ApplyMeetingConfig()
         {
             if (_actionButton == null) return;
-            if (_config.Icon != null) _actionButton.graphic.sprite = _config.Icon;
+            if (_config.Icon != null)
+            {
+                _actionButton.graphic.sprite = _config.Icon;
+                // ★ 换图后必须重算冷却遮罩的 UV 包围盒 —— 否则遮罩会按**旧图标的 uv** 画，
+                //   看起来就是"装填动画错误"（根因详见 AbilityButton.ApplyIcon 的注释）
+                try { _actionButton.graphic.SetCooldownNormalizedUvs(); }
+                catch { }
+            }
             string label = _config.ResolvedLabel;
             if (!string.IsNullOrEmpty(label)) _actionButton.OverrideText(label);
             if (_config.Cooldown > 0f)

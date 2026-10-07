@@ -158,7 +158,9 @@ namespace LightInDark.UI.Ability
             if (IsDeadObject) return;
             try
             {
-                if (_inCooldown)
+                // ★ 冷却推进条件（2026-10-06 对齐 Nebula 的 `TimerImpl.SetAsAbilityCoolDown` /
+                //   老版 `Helpers.ProceedTimer`）：**用不了技能的场合，CD 不该前进** ✓
+                if (_inCooldown && ShouldTickCooldown())
                 {
                     _cooldownTimer -= Time.deltaTime;
                     if (_cooldownTimer <= 0f)
@@ -180,6 +182,73 @@ namespace LightInDark.UI.Ability
             {
                 LightLogger.LogWarning($"[RoleButtonBase.Update] {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// **冷却是否应当推进** —— 对齐 Nebula 的谓词（新版 `TimerImpl.SetAsAbilityCoolDown()` /
+        /// 老版 `Nebula\Helpers.cs:35-68` 的 `ProceedTimer`，后者第 46 行就是 `if (LocalPlayer.inVent) return false;`）。
+        ///
+        /// 依据：原版 `PlayerControl.CanMove`（19.0 `PlayerControl.cs:23-27`）本身就要求
+        /// `<c>!inVent &amp;&amp; !Minigame &amp;&amp; !MeetingHud &amp;&amp; !ExileController &amp;&amp; !IntroCutscene</c>` 等等 ——
+        /// 这些场合玩家**根本用不了技能**，所以 CD 也不该前进 ✓
+        /// （用户 2026-10-06 报的「管道里技能能走 CD」就是这条谓词缺失的直接后果 ✓）
+        ///
+        /// ⚠️ 小游戏做了**白名单**：做任务时（`MyNormTask`）以及开关/门卡/生命体征小游戏里
+        ///    Nebula 是**允许继续走 CD** 的 ✓（否则做个任务回来 CD 白等 ✗）—— 这里照抄同一份白名单 ✓
+        /// ⚠️ 想改某个职业的行为，覆写本方法即可 ✓
+        /// </summary>
+        protected virtual bool ShouldTickCooldown()
+        {
+            try
+            {
+                var control = _player?.Control;
+                if (control == null) control = PlayerControl.LocalPlayer;
+                if (control == null) return true;                 // 拿不到就当正常（宁可正常走 CD，也别卡死）
+
+                var data = control.Data;
+                if (data == null) return false;                   // 数据没就绪：先别走
+                if (data.IsDead || data.Disconnected) return false;
+
+                // —— 用不了技能的场合（照抄 PlayerControl.CanMove 的那几条）——
+                if (control.inVent) return false;                  // ★ 通风管（用户报的那条）
+                if (control.shapeshifting) return false;
+                if (MeetingHud.Instance != null) return false;      // 会议
+                if (ExileController.Instance != null) return false; // 放逐动画
+                if (IntroCutscene.Instance != null) return false;   // 开场动画
+                if (PlayerCustomizationMenu.Instance != null) return false;
+
+                var hud = HudManager.Instance;
+                if (hud != null && hud.IsIntroDisplayed) return false;
+
+                // —— 小游戏：白名单内仍然推进（与 Nebula 一致）——
+                var minigame = Minigame.Instance;
+                if (minigame != null && !IsCooldownAllowedMinigame(minigame)) return false;
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[RoleButtonBase.ShouldTickCooldown] {ex.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 冷却在小游戏里是否照常推进（Nebula 的白名单：做任务 + 开关 + 门卡 + 生命体征）。
+        /// ⚠️ 用 `TryCast`（AGENTS §4.2.0：IL2CPP 下 `is` 判断会静默为 false ✗）
+        /// </summary>
+        private static bool IsCooldownAllowedMinigame(Minigame minigame)
+        {
+            try
+            {
+                if (minigame == null) return false;
+                if (minigame.MyNormTask != null) return true;                       // 普通任务
+                if (minigame.TryCast<SwitchMinigame>() != null) return true;
+                if (minigame.TryCast<IDoorMinigame>() != null) return true;
+                if (minigame.TryCast<VitalsMinigame>() != null) return true;
+                return false;
+            }
+            catch { return false; }
         }
 
         /// <summary>冷却归零时的处理（子类可覆写，默认播放冷却完成音效）。</summary>

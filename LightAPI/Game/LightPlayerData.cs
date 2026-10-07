@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using LightInDark.Core;
 
@@ -261,6 +261,26 @@ namespace LightInDark.Game
             }
         }
 
+        /// <summary>
+        /// 把持久数据里的**职业内部名（CodeName）**翻成当前语言的显示名。
+        ///
+        /// ⚠️ 审查 A16：存储从"本地化显示名"改成 CodeName 之后，
+        ///    **所有**显示点都必须过这一层 —— 否则界面上会直接看到 `caller` 这种内部名 ✗
+        ///    （好处：两个职业译名相同也不会混淆、换语言后历史照样能正确翻译、
+        ///      而且随时能反查回 `RoleTemplate` ✓）
+        /// </summary>
+        public static string DisplayRole(string codeName)
+        {
+            if (string.IsNullOrEmpty(codeName)) return "";
+            try
+            {
+                var role = Roles.RoleRegistry.GetByName(codeName);
+                if (role != null) return role.Name;      // 已注册 → 当前语言的名字 ✓
+            }
+            catch { }
+            return codeName;                              // 注册表里没有（旧存档/第三方职业）→ 原样显示 ✓
+        }
+
         /// <summary>生成复盘文本</summary>
         public static string BuildReplayText()
         {
@@ -284,15 +304,21 @@ namespace LightInDark.Game
                 foreach (var data in AllPlayerData)
                 {
                     var status = data.GetDeathCauseText();
-                    var role = string.IsNullOrEmpty(data.FinalRoleName) ? "未知" : data.FinalRoleName;
+                    // ★ 审查 A16：持久数据里存的是 **CodeName（内部名）**，显示前必须翻成当前语言的名字 ✓
+                    //   （否则复盘里会直接看到 `caller` 这种内部名 ✗）
+                    var role = string.IsNullOrEmpty(data.FinalRoleName)
+                        ? "未知"
+                        : DisplayRole(data.FinalRoleName);
                     var taskInfo = data.TotalTasks > 0 ? $" 任务:{data.CompletedTasks}/{data.TotalTasks}" : "";
-                    var changeInfo = data.HasRoleChanged ? $" (原:{data.AssignedRoleName})" : "";
+                    var changeInfo = data.HasRoleChanged
+                        ? $" (原:{DisplayRole(data.AssignedRoleName)})"
+                        : "";
 
                     sb.AppendLine($"{data.PlayerName} | {role}{changeInfo} | {status}{taskInfo}");
 
                     // 职业变化历史
                     foreach (var change in data.RoleHistory)
-                        sb.AppendLine($"  └ 第{change.MeetingNumber}轮: {change.FromRole} → {change.ToRole}");
+                        sb.AppendLine($"  └ 第{change.MeetingNumber}轮: {DisplayRole(change.FromRole)} → {DisplayRole(change.ToRole)}");
                 }
 
                 return sb.ToString();

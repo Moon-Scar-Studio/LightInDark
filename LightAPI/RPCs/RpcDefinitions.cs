@@ -16,22 +16,63 @@ namespace LightInDark.RPCs
         // ============ 角色同步 ============
 
         /// <summary>
-        /// **早到的职业 RPC 挂起表**（playerId → (roleId, arguments)）。
+        /// **早到的职业 RPC 挂起表**（playerId → (CodeName, arguments)）。
         ///
         /// ⚠️ 为什么需要：房主在自己的 `RoleManager.SelectRoles` 里就把 N 条 `SetRole` 发出来了，
         ///    而客户端那一刻**可能还没建 Player 表** → 原来 `gamePlayer == null` 直接 `return`，
         ///    **静默丢弃且不重试** → 客户端整局没有职业，而房主日志一切正常 ✗
         ///    （AGENTS §4.2.3 记的"时机不对就晚点做"同款问题）
         ///    现在改成挂起，等 `GameManager.Initialize()` 建好表后由 <see cref="FlushPendingRoles"/> 重放。
+        ///
+        /// ⚠️ 键是 **CodeName（字符串）**，不是 Id —— 见 <see cref="SetRoleByCode"/> 的说明。
         /// </summary>
-        private static readonly System.Collections.Generic.Dictionary<byte, (int RoleId, int[] Arguments)> PendingRoles = new();
+        private static readonly System.Collections.Generic.Dictionary<byte, (string CodeName, int[] Arguments)> PendingRoles = new();
 
         /// <summary>
-        /// 房主下发职业。
+        /// 房主下发职业（**按内部名 CodeName** —— 审查 A3 的根治版）。
+        ///
+        /// ⚠️⚠️ 为什么不再用 `roleId`：
+        ///   `RoleTemplate.Id` 是**按注册顺序**发的号（`RoleRegistry` 里 `_nextId++`）。
+        ///   只要两端注册顺序/数量有一点差别（某个职业构造抛异常、`ReflectionTypeLoadException`
+        ///   只加载了一半类型、第三方职业注册时机不同…），**后面所有 Id 会整体错位** ✗
+        ///   → 对端拿这个 Id 查表会解析成**另一个职业**，而且全程无异常、无日志 ✗✗
+        ///   `CodeName` 是职业自己声明的**稳定字符串**（`role.{CodeName}.*` 那套键就是它）✓
+        ///   → 从此"发错职业"在协议层不可能再发生 ✓
+        ///   （`SetRole(byte,int,int[])` 保留兼容旧调用，但它内部也转成 CodeName 路径 ✓）
+        /// </summary>
+        [LidRPC(OnlyHost = true)]
+        public static void SetRoleByCode(byte playerId, string codeName, int[] arguments)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(codeName))
+                {
+                    LightLogger.LogError($"[RPC] SetRoleByCode 收到空 CodeName（playerId={playerId}）");
+                    return;
+                }
+
+                var definedRole = RoleRegistry.GetByName(codeName);
+                if (definedRole == null)
+                {
+                    LightLogger.LogError($"[RPC] SetRoleByCode 收到未注册职业「{codeName}」（playerId={playerId}）");
+                    return;
+                }
+
+                QueueOrApply(playerId, definedRole, arguments);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.SetRoleByCode", ex);
+            }
+        }
+
+        /// <summary>
+        /// 房主下发职业（**旧的按 Id 版本**，保留兼容）。
         ///
         /// ⚠️ `OnlyHost = true`（2026-10-06 审查）：不加的话**任何客户端都能广播"我是召集者"** ——
         ///   接收端原来只按 hash 执行、不校验来源（`LidRPC.cs:122` 的 `OnlyHost` 检查是现成的闸门，白不用）。
-        ///   这不只是"能作弊"，也让排查变得无从下手（日志里看起来是合法 RPC）。
+        /// ⚠️ 内部已转成 CodeName 路径（挂起表也按 CodeName 存）✓ 所以即使有人还在调它，
+        ///    重放时也不会因为 Id 错位而丢职业 ✓
         /// </summary>
         [LidRPC(OnlyHost = true)]
         public static void SetRole(byte playerId, int roleId, int[] arguments)
@@ -46,16 +87,7 @@ namespace LightInDark.RPCs
                     return;
                 }
 
-                var gamePlayer = Game.GameManager.Instance.GetPlayer(playerId);
-                if (gamePlayer == null)
-                {
-                    PendingRoles[playerId] = (roleId, arguments);
-                    LightLogger.Log($"[RPC] SetRole({playerId},{definedRole.CodeName}) 早到 → 挂起，" +
-                                    $"等 Player 表就绪后重放（当前挂起 {PendingRoles.Count} 条）");
-                    return;
-                }
-
-                ApplyRole(gamePlayer, definedRole, arguments);
+                QueueOrApply(playerId, definedRole, arguments);
             }
             catch (Exception ex)
             {
@@ -63,11 +95,31 @@ namespace LightInDark.RPCs
             }
         }
 
+        /// <summary>玩家表还没建好就挂起（按 CodeName 存），否则立刻落地。两条 RPC 共用。</summary>
+        private static void QueueOrApply(byte playerId, RoleTemplate definedRole, int[] arguments)
+        {
+            var gamePlayer = Game.GameManager.Instance.GetPlayer(playerId);
+            if (gamePlayer == null)
+            {
+                PendingRoles[playerId] = (definedRole.CodeName, arguments);
+                LightLogger.Log($"[RPC] SetRole({playerId},{definedRole.CodeName}) 早到 → 挂起，" +
+                                $"等 Player 表就绪后重放（当前挂起 {PendingRoles.Count} 条）");
+                return;
+            }
+
+            ApplyRole(gamePlayer, definedRole, arguments);
+        }
+
         /// <summary>真正落到玩家身上（SetRole 与重放共用）。</summary>
         private static void ApplyRole(Game.Player gamePlayer, RoleTemplate definedRole, int[] arguments)
         {
             gamePlayer.SetRoleLocal(definedRole, arguments);
-            Game.LightPlayerDataManager.SetRole(gamePlayer.Control.PlayerId, definedRole.Name);
+
+            // ★ 审查 A16：持久数据里存 **CodeName**（稳定内部名），不再存本地化显示名 ✗
+            //   原来存 `definedRole.Name`（按语言解析出来的文字）→ 两个职业译名相同就混淆、
+            //   换语言后历史与新记录语言不一致、也**无法反查回 RoleTemplate** ✗
+            //   显示时再用 RoleRegistry 翻回本地化名字（`LightPlayerData.DisplayRole` ✓）
+            Game.LightPlayerDataManager.SetRole(gamePlayer.Control.PlayerId, definedRole.CodeName);
 
             // ★ 中立职业的任务不计入进度（PR 带来的逻辑）。
             //   ⚠️ 刻意放在这个**共用落地函数**里，而不是只写在 SetRole 里：
@@ -89,13 +141,14 @@ namespace LightInDark.RPCs
             if (PendingRoles.Count == 0) return;
             try
             {
-                var pending = new List<KeyValuePair<byte, (int RoleId, int[] Arguments)>>(PendingRoles);
+                var pending = new List<KeyValuePair<byte, (string CodeName, int[] Arguments)>>(PendingRoles);
                 PendingRoles.Clear();
 
                 int ok = 0, lost = 0;
                 foreach (var kv in pending)
                 {
-                    var role = RoleRegistry.GetById(kv.Value.RoleId);
+                    // ★ 按 CodeName 还原（审查 A3）：Id 会因注册顺序错位，CodeName 不会 ✓
+                    var role = RoleRegistry.GetByName(kv.Value.CodeName);
                     var player = Game.GameManager.Instance.GetPlayer(kv.Key);
                     if (role == null || player == null) { lost++; continue; }
                     ApplyRole(player, role, kv.Value.Arguments);
