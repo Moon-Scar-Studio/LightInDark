@@ -352,6 +352,13 @@ public static class GameSettingMenuPatch
 
     /// <summary>当前打开的页签下标。</summary>
     private static int _currentTab = TabMod;
+
+    /// <summary>
+    /// 原版 `GameSettingMenu` 实例（`ChangeTabPrefix` 里存下来 ✓）。
+    /// ⚠️ 原来没有这个字段 —— 实例只作为 patch 参数出现 ✗，
+    ///    所以"每帧自愈"（<see cref="TickTabGuard"/>）拿不到它 ✓ → 必须存一份 ✓
+    /// </summary>
+    private static GameSettingMenu? _menuInstance;
     /// <summary>8 个页签按钮。</summary>
     private static readonly GameObject?[] _tabButtons = new GameObject?[8];
 
@@ -1072,6 +1079,7 @@ public static class GameSettingMenuPatch
             if (previewOnly) return true;
 
             _currentTab = tabNum;
+            _menuInstance = __instance;      // ★ 存下来给"每帧自愈"用（TickTabGuard ✓）
 
             // ① 关掉所有内容页：原版三个 + 我们克隆的
             SetActiveSafe(__instance.PresetsTab?.gameObject, false);
@@ -1135,6 +1143,166 @@ public static class GameSettingMenuPatch
             LightLogger.LogError("[GameSettingMenuPatch.ChangeTabPrefix]", ex);
             return true;    // 出错就交回原版，至少不把界面搞死
         }
+    }
+
+    /// <summary>
+    /// **每帧自愈：把"不该显示的另一页签"压回去** ✓✓
+    ///
+    /// ═══════════════════════════════════════════════════════════════════════
+    /// 【为什么必须有这个】（2026-10-10 用户连报两条 ✓）
+    ///   · "职业页签还没进详情页就外泄**游戏设置**的内容" ✗
+    ///   · "调整职业数量时外泄出**模组设置**的内容" ✗
+    ///
+    /// `ChangeTabPrefix` 里**已经**做过互斥显隐（关掉三个原版页签 + 全部克隆菜单 ✓），
+    /// 但只做**一次**不够 ✗ —— 工程注释里早就记着原因：
+    ///   "原版 `OpenMenu/ChangeTab` 会走 `OpenChancesTab`，
+    ///     把 `RoleChancesSettings` **重新 `SetActive(true)`**"
+    /// 也就是：原版在我们之后又把某个页签**点亮** ✗ → 它的内容就留在别人的页上 ✓✓
+    ///
+    /// 【做法】状态差量：**只在真的发现"不该亮的页签亮着"时才写** ✓
+    ///   由 `ConfigUIPanel.Refresh`（每帧都会跑 ✓）调用 ✓
+    /// ═══════════════════════════════════════════════════════════════════════
+    /// </summary>
+    internal static void TickTabGuard()
+    {
+        try
+        {
+            var menu = _menuInstance;
+            if (menu == null) return;
+
+            // 只在"当前停在 MOD 页签"时守护 ✓ —— 原版页签当然要让它亮着 ✓
+            if (!Light.UI.Config.ConfigUIPanel.ModTabActive) return;
+
+            int fixedCount = 0;
+
+            // ★★ 2026-10-10 用户："跟没修一样" —— 前三轮我都在猜"该关掉谁" ✗，全猜错 ✗✗
+            //    日志给出了关键事实（配置行的真实路径）：
+            //      Main Camera/PlayerOptionsMenu(Clone)/**MainArea**/LightModSettingsPage/LightConfigPage/…
+            //    → 我们的页和原版页签**都在 `MainArea` 下** ✓
+            //    → 那就不必知道"具体是哪个对象"了 ✓：**在 MOD 页签上，`MainArea` 里除我们的页之外一律压住** ✓✓
+            //      （原版 `OpenMenu/OpenChancesTab` 事后点亮谁都没用 ✓ 每帧压一次 ✓）
+            //    ⚠️ 压的时候走 `ConfigUIPanel.RememberHiddenForRestore` ✓
+            //       —— 这样切回原版页签时 `RestoreVanillaState()` 能把它们**原样放回来** ✓（不然又是空白 ✗）
+            fixedCount += SuppressNonModPagesUnderMainArea(menu);
+
+            // ① 三个原版页签一个都不该亮 ✓（我们有自己的 6 个克隆菜单 ✓）
+            fixedCount += HideIfActive(menu.PresetsTab?.gameObject, "PresetsTab");
+            fixedCount += HideIfActive(menu.GameSettingsTab?.gameObject, "GameSettingsTab");
+            fixedCount += HideIfActive(menu.RoleSettingsTab?.gameObject, "RoleSettingsTab");
+
+            // ② 其它克隆菜单也不该亮 ✓（只留当前那个 ✓）
+            var cur = _currentTab >= 0 && _currentTab < _tabMenus.Length ? _tabMenus[_currentTab] : null;
+            for (int i = 0; i < _tabMenus.Length; i++)
+            {
+                var m = _tabMenus[i];
+                if (m == null || m == cur) continue;
+                fixedCount += HideIfActive(m.gameObject, $"克隆菜单[{i}]");
+            }
+
+            if (fixedCount > 0)
+                LightLogger.Log($"[GameSettingMenuPatch] 压回了 {fixedCount} 个「不该亮」的页签 ✓" +
+                                "（原版 OpenMenu/OpenChancesTab 会把它重新 SetActive(true) ✗）");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogDebug($"[GameSettingMenuPatch.TickTabGuard] {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// **压住 `MainArea` 里"不是我们的"那些页**（状态差量 ✓）。
+    ///
+    /// ⚠️ 为什么要这么"粗"：用户连报三条外泄（游戏设置 / 模组设置 / 角色设置的内容互相串 ✗），
+    ///    我按"点名关掉某个字段"改了**三轮全错** ✗✗ —— 因为原版在我们之后
+    ///    （`OpenMenu` / `OpenChancesTab` / `OnEnable→Initialize`）会把别的东西点亮 ✓
+    ///    → 与其猜名字 ✗，不如**只留我们自己的页** ✓✓
+    ///
+    /// ⚠️ 只认 `_modPage` 那一支 ✓（它就是 `LightModSettingsPage` ✓，日志里的真实路径实证 ✓）
+    /// ⚠️ 压的时候**必须**走 `ConfigUIPanel.RememberHiddenForRestore` ✓
+    ///    —— 切回原版页签时 `RestoreVanillaState()` 才放得回来 ✓（否则"游戏设置"又是空白 ✗）
+    /// </summary>
+    private static int SuppressNonModPagesUnderMainArea(GameSettingMenu menu)
+    {
+        int n = 0;
+        try
+        {
+            if (_modPage == null) return 0;
+
+            var mainArea = menu.transform != null ? menu.transform.Find("MainArea") : null;
+            if (mainArea == null) return 0;
+
+            // ⚠️⚠️ 2026-10-10 第二轮修正（用户："游戏设置内容又没了" ✗）：
+            //    上一版是**广谱压制** —— `MainArea` 下除我们页之外一律关掉 ✗
+            //    → 连**原版页签**都一起压了 → "游戏设置"又空了 ✓
+            //    而日志这次给出了**精准名单** ✓✓：
+            //      压住了 MainArea 下的 'LightTabMenu_Crewmate' ✓
+            //      压住了 MainArea 下的 'LightTabMenu_Mod'      ✓
+            //    → 真正漏出来的是**我们自己克隆的那 6 个页签菜单**（`LightTabMenu_*` ✓）——
+            //      它们并排躺在 `MainArea` 下 ✓，离开时没关 ✗ →
+            //      里面**克隆自带的原版行**（伪装者数/击杀冷却/视野/范围）就露出来了 ✓✓
+            //    → 所以：**只压 `LightTabMenu_*`，而且只压"不是当前页签"的那个** ✓✓
+            //      （原版 `PresetsTab`/`GameSettingsTab`/`RoleSettingsTab` 一律**不碰** ✓
+            //        这样"游戏设置"永远不会被我们关掉 ✓）
+            var cur = _currentTab >= 0 && _currentTab < _tabMenus.Length ? _tabMenus[_currentTab] : null;
+
+            for (int i = 0; i < mainArea.childCount; i++)
+            {
+                var child = mainArea.GetChild(i);
+                if (child == null) continue;
+
+                // ★ 只认我们自己克隆的页签菜单 ✓（原版页签名字不是这个前缀 ✓ → 绝不误伤 ✓）
+                if (!child.name.StartsWith("LightTabMenu_", StringComparison.Ordinal)) continue;
+
+                // 当前页签那一份要留着用 ✓
+                if (cur != null && child.gameObject == cur.gameObject) continue;
+
+                if (!child.gameObject.activeSelf) continue;
+
+                Light.UI.Config.ConfigUIPanel.RememberHiddenForRestore(child.gameObject);
+                child.gameObject.SetActive(false);
+                n++;
+
+                if (_suppressLogs < 8)
+                {
+                    _suppressLogs++;
+                    LightLogger.Log($"[GameSettingMenuPatch] 关掉了没在用的页签菜单 '{child.name}' ✓" +
+                                    "（它里面克隆自带的原版行会漏到别的页上 ✗）");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogDebug($"[GameSettingMenuPatch.SuppressNonModPagesUnderMainArea] {ex.Message}");
+        }
+        return n;
+    }
+
+    private static int _suppressLogs;
+
+    /// <summary>`GameSettingMenuPatch` 外部（`ConfigUIPanel.CleanCurrentHost` ✓）触发的"立刻压一次"</summary>
+    internal static void SuppressNonModPagesNow()
+    {
+        try
+        {
+            var menu = _menuInstance;
+            if (menu == null) return;
+            SuppressNonModPagesUnderMainArea(menu);
+        }
+        catch { }
+    }
+
+    /// <summary>亮着就关掉，返回 1 表示确实关了一个 ✓（状态差量用）</summary>
+    private static int HideIfActive(GameObject? go, string what)
+    {
+        try
+        {
+            if (go == null) return 0;
+            if (!go.activeSelf) return 0;
+            go.SetActive(false);
+            LightLogger.LogDebug($"[GameSettingMenuPatch] 关掉了不该显示的 '{what}' ✓");
+            return 1;
+        }
+        catch { return 0; }
     }
 
     /// <summary>SetActive 的安全封装（null 不抛）。</summary>
@@ -1375,12 +1543,26 @@ public static class GameSettingMenuPatch
             Light.UI.Config.ConfigUIPanel.Clear();
             SetActiveSafe(_modPage, false);
 
+            // ★ 2026-10-10：告诉配置面板"现在停在原版页" ✓
+            //   它靠这个决定**要不要每帧再隐藏原版行** —— 原版页当然不能隐藏 ✗
+            //   （上一版这里没标记，导致角色页签上"再隐藏"永远不生效 ✓ = 原版行漏进我们的页 ✓）
+            Light.UI.Config.ConfigUIPanel.ModTabActive = false;
+
             // 原版内容不需要我们的宿主
             Light.UI.Config.ConfigUIPanel.SetHostMenu(null);
             return;
         }
 
         SetActiveSafe(_modPage, true);
+
+        // ★★ 2026-10-10：**每个 MOD 页签都做这两件事**（用户报的两条 bug 的根治点 ✓）
+        //    ① 标记"当前是 MOD 页" → 让 `ConfigUIPanel.Refresh` 里的**每帧再隐藏**生效 ✓
+        //       （MOD 页签有三条不同路径：配置页 / 职业列表页 / 独立窗口 ✗
+        //         只看其中一个 `_page` 必然漏 ✓ —— 日志实证：角色页签上"再隐藏"从没触发过 ✓）
+        //    ② 立刻清一次原版内容，**并关掉原版 `ScrollToSelection`** ✓
+        //       （它每帧读"已隐藏的选中项"的 localPosition → 空引用 ✗，用户报的 NRE 就是它 ✓）
+        Light.UI.Config.ConfigUIPanel.ModTabActive = true;
+        Light.UI.Config.ConfigUIPanel.CleanCurrentHost();
 
         // 取该页签对应的配置分类
         var cats = CategoriesForTab(index);

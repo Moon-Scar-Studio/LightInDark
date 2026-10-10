@@ -102,7 +102,9 @@ namespace Light.UI.Config
             _categoryFilter = categories;
             _singleBlock = null;
             _onBack = null;
+            _lastVisibilitySig = "";      // 换了页 → 签名作废，必须重新建 ✓（并让滚动回到顶部 ✓）
             Rebuild(parent);
+            ResetScrollToTop();
         }
 
         /// <summary>单职业模式：只渲染一个职业块，顶部带返回按钮（点击回职业列表）。</summary>
@@ -112,7 +114,9 @@ namespace Light.UI.Config
             _categoryFilter = null;
             _singleBlock = block;
             _onBack = onBack;
+            _lastVisibilitySig = "";      // 同上 ✓
             Build(parent);
+            ResetScrollToTop();
         }
 
         /// <summary>
@@ -209,10 +213,18 @@ namespace Light.UI.Config
                 //    后者只清列表 → 行变成孤儿留在容器里 → 和 Build() 那条路径叠成两份。
                 DestroySpawned();
 
-                var container = menu.settingsContainer;
+                // ⚠️⚠️⚠️ 2026-10-10 用户报「还是外泄」——根因就在这里 ✗✗：
+                //    这里**直接用 `menu.settingsContainer`**，**没走 `ResolveRowContainer`** ✗
+                //    而 `settingsContainer` 在菜单没初始化时指向 `SliderInner`（一个滑块 ✗）——
+                //    `ResolveRowContainer` 里那两处"拒绝 SliderInner"的检查**完全没被用上** ✗✗
+                //    日志实证：
+                //      [ConfigUIPanel] 已铺入原版容器 'SliderInner'：行 27 个   ← 27 行塞进滑块内部 ✓ = 外泄
+                //    → 改走同一套解析（它会拒绝坏容器并退回自建容器 ✓）
+                var fallback = _page != null ? _page.transform : menu.settingsContainer;
+                var container = ResolveRowContainer(fallback);
                 if (container == null)
                 {
-                    LightLogger.LogWarning("[ConfigUIPanel] settingsContainer 为 null，无法铺行");
+                    LightLogger.LogWarning("[ConfigUIPanel] 解析不到行容器，无法铺行");
                     return;
                 }
 
@@ -266,23 +278,102 @@ namespace Light.UI.Config
                 var sb = menu.scrollBar;
                 if (sb == null) return;
 
-                float contentHeight = Mathf.Max(0f, startY - lastY) + 0.35f;   // 内容总高
+                // ★★ 2026-10-06 用户报「配置项的滚动条没用，所有我们加的都是没用的」——
+                //    根因（读原版 `Scroller.Update` L176-183 得到）：
+                //    <code>
+                //      if (this.MouseMustBeOverToScroll &amp;&amp; this.ClickMask)
+                //          this.mouseOver = this.ClickMask.OverlapPoint(...);
+                //      if (!this.MouseMustBeOverToScroll || this.mouseOver)   // ← 否则**滚轮被忽略** ✗
+                //          { var v = Input.mouseScrollDelta * ScrollWheelSpeed; ScrollRelative(v); }
+                //    </code>
+                //    也就是：滚轮要生效，必须"鼠标压在 ClickMask 上（且 ClickMask 非空）"，
+                //    否则整段跳过 ✗ —— 我们铺进去的行不在原版那套 collider 范围里 ✗ → 滚不动 ✓
+                //    → 两条都补上：
+                //      ① `MouseMustBeOverToScroll = false`（本页是 MOD 设置页，滚轮随时可用 ✓）
+                //      ② 顺手把 `ClickMask` 接上原版点击遮罩（双保险 ✓，也让拖动滚动条正常 ✓）
+                try
+                {
+                    sb.MouseMustBeOverToScroll = false;
+                    var mask = menu.ButtonClickMask;
+                    if (mask != null) sb.ClickMask = mask;
+
+                    // ★ 保险：`Scroller` 继承自原版的 UI 元素基类，**组件被禁用或物体没激活时
+                    //   它的 `Update` 根本不会跑** ✗ → 滚轮和拖动全都无响应 ✓（正是用户报的现象 ✓）
+                    if (!sb.enabled) { sb.enabled = true; LightLogger.Log("[ConfigUIPanel] Scroller 原本是禁用的 → 已启用 ✓"); }
+                    if (sb.gameObject != null && !sb.gameObject.activeSelf)
+                    {
+                        sb.gameObject.SetActive(true);
+                        LightLogger.Log("[ConfigUIPanel] Scroller 所在物体原本未激活 → 已激活 ✓");
+                    }
+
+                    // 一次性诊断：把"滚轮能不能生效"的每个条件都打出来 ✓（下次一跑就知道卡在哪 ✓）
+                    if (_scrollDiagLogs < 3)
+                    {
+                        _scrollDiagLogs++;
+                        var yBar = sb.ScrollbarY;
+                        LightLogger.Log($"[ConfigUIPanel][滚动取证] enabled={sb.enabled} active={sb.gameObject.activeSelf} " +
+                                        $"MouseMustBeOverToScroll={sb.MouseMustBeOverToScroll} ClickMask={(sb.ClickMask != null ? "有" : "null ✗")} " +
+                                        $"Inner={(sb.Inner != null ? "有" : "null ✗")} ScrollbarY={(yBar != null ? (yBar.gameObject.activeSelf ? "有/显示" : "有/隐藏") : "null ✗")} " +
+                                        $"bounds=({sb.ContentYBounds.min:F2},{sb.ContentYBounds.max:F2}) 滚轮速度={sb.ScrollWheelSpeed}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[ConfigUIPanel.UpdateScrollBounds] 设置滚轮可用性失败：{ex.Message}");
+                }
+
+                // ⚠️⚠️ 2026-10-10 用户报「还是不能滚动」——新日志实证：`bounds` 在跳 ✗
+                //      (0,7.81) → (0,**0.00**) → (0,10.72)   ← max=0 那一刻 = 判定"装得下" → 滚不动 ✗✗
+                //   根因：原来 `contentHeight` 是**照注册表"数"出来的**（只数 `IsVisible` 的项 ✓），
+                //   而行是**增量增删**的 ✓ → 中间态数不准 ✗ → 偶尔算出"装得下" ✓
+                //   ★ 改成按**行的真实位置**算（地面真相 ✓）：取所有已建行里最低的那个 y ✓
+                //     行就在场上，量它不会有中间态 ✓✓
+                float contentHeight = MeasureContentHeightFromRows(startY);
+                if (contentHeight < 0f) contentHeight = Mathf.Max(0f, startY - lastY) + 0.35f;   // 取不到行才退回原算法 ✓
                 float viewport = MeasureViewportHeight(menu);
-                float overflow = Mathf.Max(0f, contentHeight - viewport);
-                bool needBar = overflow > 0.01f;
+
+                // ★ 2026-10-10 用户："那个滚动条底下留一点空间，现在这个滑到底最下面的配置项想按到非常艰难" ✓
+                //   → 能滚的时候，把可滚范围**多加一段底部留白** ✓
+                //     这样最后一行能滚到"离开底边一点"的位置，点得动 ✓
+                //   ⚠️ 判定"要不要滚动条"仍用**真实内容高** ✓ —— 装得下就绝不显示滚动条 ✗
+                const float BottomPadding = 1.30f;
+                bool needBar = contentHeight > viewport + 0.01f;
+                float overflow = needBar ? Mathf.Max(0f, contentHeight + BottomPadding - viewport) : 0f;
 
                 sb.SetYBoundsMin(0f);
                 sb.SetYBoundsMax(needBar ? overflow : 0f);
 
-                // 内容从顶部开始（Inner.y = 0）
-                var inner = sb.Inner;
-                if (inner != null)
-                {
-                    var lp = inner.localPosition;
-                    inner.localPosition = new Vector3(lp.x, 0f, lp.z);
-                }
+                // ⚠️⚠️ 2026-10-06 用户报「滚动还没生效，拖动和滑轮都用不了」——根因就在这里 ✗✗：
+                //    原来**每次**调用都把 `Inner.localPosition.y` 写回 0 ✗，
+                //    而 `UpdateScrollBounds` 会被 Build / Relayout / 增量可见性 / Refresh 链反复调用 ✓
+                //    → 玩家刚滚一点，下一帧就被拽回顶部 ✓ = "滚不动" ✓✓
+                //    ★ 正确做法（状态差量）：**只有内容高度真的变了**（换页/增删行）才归零 ✓，
+                //      否则**一个字都不写** ✓ —— 让原版 Scroller 自己管 Inner 的位置 ✓
+                bool contentChanged = Mathf.Abs(contentHeight - _lastContentHeight) > 0.01f;
+                _lastContentHeight = contentHeight;
 
+                // ⚠️⚠️ 2026-10-10 用户报「还是不能滚动」——日志给出了真因 ✗：
+                //     增量可见性**每帧抖一次**（+1/-1 交替），内容高度就在 11.42 ↔ 10.97 之间跳 ✓
+                //     → `contentChanged` **每帧都为真** ✗ → `Inner` 每帧被归零 → 永远滚不动 ✓✓
+                //   ★ 所以这里**只负责范围（min/max）**，**绝不碰 `Inner` 位置** ✓
+                //     归零改到"换页/重开面板"时做（`ResetScrollToTop()` ✓），滚轮/拖动由原版全权处理 ✓
                 sb.UpdateScrollBars();   // 让原版按 min/max 决定 Toggle
+
+                // ★★ 2026-10-10 「还是无法滚动」的**根治** ✓✓：
+                //    原版 `Scroller` 滚的是**它自己的 `Inner`** ✓
+                //    （`ScrollRelative` → `Inner.localPosition` ✓，滚轮/拖动/滚动条最后都落到这一句 ✓）
+                //    而我们的行铺在**自建容器**（`_container` = `LightConfigPage` 或它的子物体 ✓）里 ✗
+                //    → 原版挪的是另一个物体 → **滚了等于没滚** ✓✓（日志实证：
+                //      "Scroller.Inner 指向了 'SliderInner'（已知坏容器），拒绝使用，退回自建容器" ✓
+                //       —— 拒绝是对的 ✓，但拒绝之后没把 `Inner` 改成我们的容器 ✗）
+                //    → 现在把 `Inner` 指向我们真正的行容器 ✓，之后滚轮/拖动/滚动条**全部交给原版** ✓
+                //      （离开页签时 `RestoreVanillaState()` 会还原 ✓）
+                if (_container != null && sb.Inner != _container)
+                {
+                    if (_originalInner == null) _originalInner = sb.Inner;   // 只记第一次的原值 ✓
+                    sb.Inner = _container;
+                    LightLogger.Log($"[ConfigUIPanel] Scroller.Inner → '{_container.name}' ✓（滚轮/拖动由此生效）");
+                }
 
                 LightLogger.Log($"[ConfigUIPanel] 滚动条自动检测：内容高 {contentHeight:F2} / 可视高 {viewport:F2} " +
                                 $"→ {(needBar ? $"需要（溢出 {overflow:F2}）" : "不需要，已隐藏")}");
@@ -290,6 +381,47 @@ namespace Light.UI.Config
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[ConfigUIPanel.UpdateScrollBounds] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// **按行的真实位置**量内容高度（返回 &lt;0 表示量不到，调用方退回旧算法 ✓）。
+        ///
+        /// ⚠️ 为什么不用"照注册表数一遍"（那是原实现 ✗）：
+        ///   行是**增量**增删的 ✓ → 在"注册表说该显示 / 行还没建出来"的中间态里数出来会偏小 ✗
+        ///   → `overflow = 0` → `SetYBoundsMax(0)` → **滚动被禁用**（用户："还是不能滚动" ✓✓）
+        ///   行本身就在场上 ✓，量它的 y 是**地面真相** ✓ 不会抖 ✓
+        /// </summary>
+        private static float MeasureContentHeightFromRows(float startY)
+        {
+            try
+            {
+                if (_drivers.Count == 0) return -1f;
+
+                float lowest = float.MaxValue;
+                int counted = 0;
+
+                foreach (var kv in _drivers)
+                {
+                    var drv = kv.Value;
+                    if (drv == null) continue;
+                    var go = drv.gameObject;
+                    if (go == null || !go.activeSelf) continue;      // 只量显示中的行 ✓
+
+                    float y = go.transform.localPosition.y;
+                    if (y < lowest) lowest = y;
+                    counted++;
+                }
+
+                if (counted == 0 || lowest == float.MaxValue) return -1f;
+
+                // 分类头也在场，但它们的 y 通常不小于行；用"最低的行"已经足够 ✓
+                return Mathf.Max(0f, startY - lowest) + 0.35f;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.MeasureContentHeightFromRows] {ex.Message}");
+                return -1f;
             }
         }
 
@@ -474,6 +606,63 @@ namespace Light.UI.Config
         /// 切页签时用：让下一次 CreateSettings 在干净的容器里重铺。
         /// </summary>
         public static void ClearRowsOnly() => DestroySpawned();
+
+        /// <summary>
+        /// 我们为了不叠层而**关掉的原版物体**（GameObject → 它原来的 activeSelf ✓）。
+        ///
+        /// ⚠️ 为什么必须记：MOD 页签与"游戏设置"页签**共用同一个 `GameOptionsMenu`** ✓
+        ///    我们单向 `SetActive(false)` 之后不还原 ✗ → 切回原版页签就是**一片空白** ✓
+        ///    （用户 2026-10-06 报的"游戏设置里面的原版内容咋还被隐藏了" ✓）
+        /// </summary>
+        private static readonly List<(GameObject Go, bool WasActive)> _hiddenVanilla = new();
+
+        /// <summary>
+        /// 供 `GameSettingMenuPatch` 记录"我们压住的原版页" ✓
+        /// —— 压住时必须记账 ✓，否则切回原版页签时它们放不回来（"游戏设置"空白 ✗）
+        /// </summary>
+        internal static void RememberHiddenForRestore(GameObject go) => RememberHidden(go);
+
+        /// <summary>记下一个被我们关掉的原版物体（同一物体只记一次 ✓）</summary>
+        private static void RememberHidden(GameObject go)
+        {
+            try
+            {
+                if (go == null) return;
+                for (int i = 0; i < _hiddenVanilla.Count; i++)
+                    if (_hiddenVanilla[i].Go == go) return;
+
+                _hiddenVanilla.Add((go, true));      // 只有 activeSelf == true 的才会走到这里 ✓
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// **把我们关过的原版物体原样恢复** ✓（离开 MOD 页签时调用 ✓）。
+        /// 这是"原版页签被清空"的根治点 ✓ —— 只恢复还活着的对象，死了的跳过 ✓
+        /// </summary>
+        private static void RestoreHiddenVanilla()
+        {
+            try
+            {
+                if (_hiddenVanilla.Count == 0) return;
+
+                int restored = 0;
+                foreach (var (go, wasActive) in _hiddenVanilla)
+                {
+                    if (go == null) continue;                 // Unity 假 null 会被 == 正确识别 ✓
+                    if (go.activeSelf != wasActive) go.SetActive(wasActive);
+                    restored++;
+                }
+                _hiddenVanilla.Clear();
+
+                if (restored > 0)
+                    LightLogger.Log($"[ConfigUIPanel] 已恢复 {restored} 个原版物体（离开 MOD 页签 ✓）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.RestoreHiddenVanilla] {ex.Message}");
+            }
+        }
         ///
         /// 【借鉴 TONE】ToN 的做法是把行挂到**原版 GameOptionsMenu 自己的 settingsContainer**
         /// （TONE\Patches\GameOptionsMenuPatch.cs:129-135），而不是自己新建一个容器。
@@ -929,7 +1118,49 @@ namespace Light.UI.Config
         }
 
         /// <summary>清空（销毁一切并复原状态）。</summary>
-        public static void Clear() => DestroySpawned();
+        public static void Clear()
+        {
+            DestroySpawned();
+
+            // ★★ 2026-10-10 用户报「游戏设置又没了」——根因就在这里 ✗：
+            //    `ClearVanillaContent` 会**隐藏**原版设置行/分类头（记进 `_hiddenVanilla` ✓），
+            //    而 `RestoreHiddenVanilla()` **从来没有被调用** ✗ → 切回"游戏设置"页签时一片空白 ✓
+            //    `Clear()` 正是"离开本页签"的唯一出口（`GameSettingMenuPatch.ShowTabConfig` 各处都调它 ✓）
+            //    → 还原原版内容 + 把滚动容器还回去 ✓
+            RestoreVanillaState();
+        }
+
+        /// <summary>
+        /// 离开 MOD 页签时**把原版状态还回去** ✓：
+        ///   ① 我们隐藏过的原版行/分类头 → 原样恢复 ✓（不然"游戏设置"页签是空的 ✗）
+        ///   ② 被我们指向自建容器的 `Scroller.Inner` → 还原成原来那个 ✓
+        /// </summary>
+        private static void RestoreVanillaState()
+        {
+            try
+            {
+                RestoreHiddenVanilla();
+
+                var host = _hostMenu ?? _templates;
+                var sb = host != null ? host.scrollBar : null;
+                if (sb != null && _originalInner != null)
+                {
+                    if (sb.Inner != _originalInner)
+                    {
+                        sb.Inner = _originalInner;
+                        LightLogger.Log($"[ConfigUIPanel] 已把 Scroller.Inner 还原成 '{_originalInner.name}' ✓");
+                    }
+                    _originalInner = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.RestoreVanillaState] {ex.Message}");
+            }
+        }
+
+        /// <summary>`Scroller.Inner` 原本指向谁（我们要把它改成自建容器才能滚动 ✓，离开时还原 ✓）</summary>
+        private static Transform? _originalInner;
 
         // =====================================================================
         //  构建
@@ -1390,6 +1621,12 @@ namespace Light.UI.Config
                 }
 
                 // ② 原版设置行：Children 里记的都是原版行，全部隐藏
+                //    ★★ 2026-10-06 用户报「游戏设置里面的原版内容咋还被隐藏了」——
+                //       根因：这里是**单向**的 `SetActive(false)` ✗，而 MOD 页签用的**就是同一个
+                //       `GameOptionsMenu`**（本文件注释："自带原版的整套设置…我们只是在它上面又加了自己的行" ✓）
+                //       → 切回"游戏设置"页签时原版行还是关着的 → 整页空白 ✓✓
+                //    → 现在**记下我们关过谁、原来的 active 是什么**，离开我们的页签时**原样恢复** ✓
+                //      （`_hiddenVanilla` + `Show()` 时清空、`ClearRowsOnly()` 时还原 ✓）
                 var children = menu.Children;
                 if (children != null)
                 {
@@ -1398,10 +1635,15 @@ namespace Light.UI.Config
                     {
                         var ch = children[i];
                         if (ch == null) continue;
-                        if (ch.gameObject.activeSelf) { ch.gameObject.SetActive(false); hidden++; }
+                        if (ch.gameObject.activeSelf)
+                        {
+                            RememberHidden(ch.gameObject);     // ★ 记下来，之后要还原 ✓
+                            ch.gameObject.SetActive(false);
+                            hidden++;
+                        }
                     }
                     if (hidden > 0)
-                        LightLogger.Log($"[ConfigUIPanel] 已隐藏 {hidden} 个原版设置行");
+                        LightLogger.Log($"[ConfigUIPanel] 已隐藏 {hidden} 个原版设置行（离开页签时会还原 ✓）");
                 }
 
                 // ③ ★★ 关键修复：把 settingsContainer 里**所有不是我们的**子物体全部隐藏。
@@ -2158,6 +2400,26 @@ namespace Light.UI.Config
         {
             try
             {
+                // ★★ 2026-10-10 用户报「职业页签外泄游戏设置」「调数量外泄模组设置」——
+                //    真因：我们的 `ChangeTabPrefix` 吃掉了原版 `ChangeTab`（`return false` ✓），
+                //    虽然接管代码里做过一次互斥显隐 ✓，但**原版之后又会把某个页签点亮** ✗
+                //    （工程注释已记："原版 OpenMenu/OpenChancesTab 会把 RoleChancesSettings 重新 SetActive(true)" ✓）
+                //    → 每帧压一次（状态差量 ✓，没漏时一个字节都不写 ✓）
+                Light.Patches.GameSettingMenuPatch.TickTabGuard();
+
+                // ★★ 2026-10-10：泄漏取证（一次性，最多 3 次 ✓）——
+                //    把"当前 MOD 页签上**还激活**的原版选项行"是谁打印出来 ✓
+                //    （连改三轮都靠猜 ✗ → 按工程规矩：先把事实打出来 ✓）
+                DumpLeakingOptionObjectsOnce();
+
+                // ★★ 2026-10-10 用户报「原版"游戏设置"的行**漏进我们的页**」——
+                //    方向我说反了 ✗：不是我们的浮窗跑到原版页，而是**原版的行回到了我们的页** ✓
+                //    根因工程注释里早就写着（见 `CleanMenu` 那段的 L1564-1567）：
+                //      "克隆菜单每次 `SetActive(true)` 都会走 `OnEnable→Initialize`，**原版内容可能回来**" ✗
+                //    → 只隐藏一次不够 ✓，在我们的**每帧刷新**里补一道"再隐藏" ✓
+                //      （状态差量：没漏出来时**一个字节都不写** ✓，开销可忽略）
+                RehideVanillaIfLeaked();
+
                 // 诊断：把 Refresh 的输入和判定结果打出来。
                 // 之前几轮都是"改了但不知道有没有跑到"，这次把每次 Refresh 都记下来。
                 if (_refreshLogs < 20)
@@ -2173,6 +2435,22 @@ namespace Light.UI.Config
 
                 if (NeedRebuild())
                 {
+                    // ★★ 2026-10-10 **防抖**（用户报「还是不能滚动 / 还是会外泄」的真因 ✓）：
+                    //    日志实证：`lid.debug.dummyCount` 的可见性**每帧抖一次** ✗ →
+                    //      `增量更新可见性：+1 行 / -0 行` ↔ `+0 行 / -1 行` 每帧交替 ✓
+                    //    后果有两个，而且是同一个原因：
+                    //      ① 内容高度每帧在 11.42 ↔ 10.97 之间跳 → 滚动位置被反复归零 → **滚不动** ✗
+                    //      ② 那一行被反复删了又建 → 位置错乱 → **看起来像"外泄"** ✗
+                    //    → 这里按"**可见行集合的签名**"防抖：签名没变就**不做任何结构改动** ✓
+                    //      （值的变化照旧走下面的 RefreshVisual ✓，不受影响）
+                    string sig = VisibilitySignature();
+                    if (sig == _lastVisibilitySig)
+                    {
+                        foreach (var kv in _drivers) kv.Value.RefreshVisual();
+                        return;
+                    }
+                    _lastVisibilitySig = sig;
+
                     // ⚠️【增量优先】依赖项(如"启用调试模式")改变可见性时，
                     //   **不要**整页销毁重建 —— 实测每次切换都会 Rebuild 一次，
                     //   行实例计数 0→1→3→4→6→7… 无限增长。
@@ -2190,6 +2468,17 @@ namespace Light.UI.Config
                         Rebuild(parent);
                         return;
                     }
+
+                    // ★ 兜底：`_container.parent` 取不到时**不能什么都不做** ✗（原来就是这样静默走空 ✓）
+                    //   用 `_page` 的父物体当退路 ✓
+                    var alt = _page != null ? _page.transform.parent : null;
+                    if (alt != null)
+                    {
+                        LightLogger.LogWarning("[ConfigUIPanel] _container.parent 为空 → 改用 _page 的父物体重建 ✓");
+                        Rebuild(alt);
+                        return;
+                    }
+                    LightLogger.LogWarning("[ConfigUIPanel] 找不到可用的父物体 → 本次不做结构改动（行可能滞留 ✗）");
                 }
 
                 foreach (var kv in _drivers) kv.Value.RefreshVisual();
@@ -2274,6 +2563,363 @@ namespace Light.UI.Config
 
         private static int _rebuildLogs;
         private static int _refreshLogs;
+
+        /// <summary>行布局取证（最多 8 次 ✓，用户报"配置项外泄"时用）</summary>
+        /// <summary>
+        /// **漏出来的原版行到底是谁** —— 一次性取证（最多 3 次 ✓）。
+        ///
+        /// ⚠️⚠️ 为什么要它（2026-10-10）：用户连报"职业页签漏游戏设置""调数量漏模组设置"，
+        ///    我连着改了三轮"该关掉谁"**全都是猜** ✗ —— 日志证明：
+        ///      · `TickTabGuard` 一条都没触发（说明不是页签 GameObject 还亮着 ✗）
+        ///      · `又冒出来了` 也没触发（说明不在当前宿主菜单的 `Children` 里 ✗）
+        ///    → 只能**把事实打出来** ✓：找出场上所有**还激活**的原版选项行，
+        ///      打印它们的**类型 + 名字 + 父链 4 层** ✓ —— 一次就能看出该关谁 ✓
+        /// ⚠️ 用 `Resources.FindObjectsOfTypeAll` 找（一次性的，最多 3 次 ✓，不影响帧率 ✓）
+        /// </summary>
+        internal static void DumpLeakingOptionObjectsOnce()
+        {
+            try
+            {
+                if (_leakDumpLogs >= 3) return;
+                if (!ModTabActive) return;
+                _leakDumpLogs++;
+
+                var sb = new System.Text.StringBuilder(512);
+                sb.Append("[ConfigUIPanel][泄漏取证] 当前 MOD 页签上**还激活**的原版选项行：");
+
+                int found = 0;
+                var all = UnityEngine.Resources.FindObjectsOfTypeAll<OptionBehaviour>();
+                if (all != null)
+                {
+                    foreach (var ob in all)
+                    {
+                        if (ob == null) continue;
+                        var go = ob.gameObject;
+                        if (go == null || !go.activeInHierarchy) continue;
+                        if (go.name.StartsWith(OurPrefix, StringComparison.Ordinal)) continue;   // 我们自己的不算 ✓
+
+                        found++;
+                        if (found > 12) continue;   // 只打前 12 个，够定位了 ✓
+
+                        sb.Append("\n   · ").Append(ob.GetType().Name).Append(" '").Append(go.name).Append("' 父链: ");
+                        var tr = go.transform;
+                        for (int d = 0; d < 4 && tr != null; d++)
+                        {
+                            sb.Append(tr.name).Append(d < 3 ? " ← " : "");
+                            tr = tr.parent;
+                        }
+                    }
+                }
+
+                sb.Append($"\n   共 {found} 个（只列前 12 个 ✓）");
+                LightLogger.Log(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogDebug($"[ConfigUIPanel.DumpLeakingOptionObjectsOnce] {ex.Message}");
+            }
+        }
+
+        private static int _leakDumpLogs;
+
+        /// <summary>行布局取证计数（最多 8 次 ✓）</summary>
+        private static int _rowLayoutLogs;
+
+
+        /// <summary>上次的内容高度（只在**真的变了**时才把滚动位置归零 ✓，见 UpdateScrollBounds）</summary>
+        private static float _lastContentHeight = -1f;
+
+        /// <summary>滚动取证日志计数（最多 3 条 ✓）</summary>
+        private static int _scrollDiagLogs;
+
+        /// <summary>
+        /// **原版内容又冒出来了 → 再隐藏一次** ✓（用户 2026-10-10："原版的行漏进我们的页" ✓）。
+        ///
+        /// ⚠️ 为什么必须每帧查：
+        ///   工程注释（`CleanMenu` 那段）早就写明 —— "克隆菜单每次 `SetActive(true)` 都会走
+        ///   `OnEnable→Initialize`，**原版内容可能回来**" ✗
+        ///   所以"进页时隐藏一次"是不够的 ✓：菜单随后初始化，会把原版行**重新显示** ✗
+        ///   （这正是用户截图里"伪装者数 / 击杀冷却时间 / 伪装者视野 / 击杀范围"出现在我们页上的原因 ✓）
+        ///
+        /// ⚠️ 状态差量：**只在真的数到"漏出来的行"时才动手** ✓（否则每帧一个字节都不写 ✓）
+        /// </summary>
+        private static void RehideVanillaIfLeaked()
+        {
+            try
+            {
+                var menu = _hostMenu ?? _templates;
+                if (menu == null) return;
+
+                // ⚠️⚠️ 2026-10-10 用户报「原版行还是漏进来」——我上一版这里判断的是
+                //    `ConfigUIPanel._page` ✗，而**角色页签用的是 `RoleListPage._page`** ✗✗
+                //    → 在角色页签上这个函数**永远提前返回** ✓✓（日志实证：整局没有一条"又冒出来了"）
+                //    → 改成看**全局的"当前是不是 MOD 页签"** ✓（由 `ShowTabConfig` 维护 ✓）
+                if (!ModTabActive) return;
+
+                // ★ 每帧也压一次"克隆菜单自带的原版行" ✓
+                //   （原版 `OnEnable→Initialize` 会重建它们 ✗ → 只清一次不够 ✓）
+                SuppressForeignOptionRows(menu);
+
+                int leaked = CountActiveVanillaRows(menu);
+                if (leaked <= 0) return;
+
+                ClearVanillaContent(menu);
+                LightLogger.Log($"[ConfigUIPanel] 原版内容又冒出来了（{leaked} 行）→ 已再次隐藏 ✓" +
+                                "（克隆菜单 OnEnable→Initialize / 上一个页签的还原都会把它们放回来 ✗）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogDebug($"[ConfigUIPanel.RehideVanillaIfLeaked] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// **当前是不是停在 MOD 页签**（由 `GameSettingMenuPatch.ShowTabConfig` 维护 ✓）。
+        ///
+        /// ⚠️ 为什么不能再用 `_page != null` 判断：MOD 页签有三条完全不同的页面路径 ——
+        ///   `ConfigUIPanel._page`（普通配置页）、`RoleListPage._page`（职业列表页）、
+        ///   `RoleDetailWindow`（独立窗口）✗ → 只看其中一个必然漏 ✓✓
+        /// </summary>
+        internal static bool ModTabActive { get; set; }
+
+        /// <summary>取当前宿主菜单（给 `GameSettingMenuPatch` 切页签时用 ✓）</summary>
+        internal static GameOptionsMenu? CurrentHostMenu => _hostMenu ?? _templates;
+
+        /// <summary>
+        /// **把宿主菜单的原版内容清干净**（含：给原版"滚动到选中项"的组件断电 ✓）。
+        /// `GameSettingMenuPatch` 在**每个 MOD 页签**上都要调一次 ✓
+        /// </summary>
+        internal static void CleanCurrentHost()
+        {
+            try
+            {
+                var menu = _hostMenu ?? _templates;
+                if (menu == null) return;
+
+                ClearVanillaContent(menu);
+                DisableVanillaScrollToSelection(menu);
+
+                // ★★ 2026-10-10 用户截图实证：**克隆菜单里自带的原版行根本没被清掉** ✗
+                //    （"伪装者数/击杀冷却时间/伪装者视野/击杀范围"就叠在我们的行上 ✓）
+                //    前三轮我都在猜"它们挂在哪个容器/哪个字段里" ✗ —— 全错 ✓
+                //    → 换做法：**不看容器，直接把宿主菜单下所有"不是我们的"选项行压住** ✓✓
+                //      （`OptionBehaviour` 是原版所有选项行的基类 ✓；
+                //        我们的行名字是 `LightConfigRow_*` ✓，排除它们即可 ✓）
+                SuppressForeignOptionRows(menu);
+
+                // ★ 同帧内把 `MainArea` 里"不是我们的页"压住 ✓
+                //   （不然要等下一帧的 `TickTabGuard` ✓ → 会闪一帧 ✗）
+                Light.Patches.GameSettingMenuPatch.SuppressNonModPagesNow();
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.CleanCurrentHost] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// **把宿主菜单下"不是我们的"原版选项行全部压住** ✓（状态差量 ✓，记账 ✓ 可还原）。
+        ///
+        /// ⚠️ 为什么用"遍历 + 排除名字"而不是"按容器找"（前三轮的教训 ✗）：
+        ///   克隆菜单里自带的原版行**不一定**在 `Children` 里 ✗、也不一定在 `Scroller.Inner` 里 ✗
+        ///   （实测截图：它们就叠在我们的行上 ✓，而我按容器清的三种写法全都没碰到它们 ✗）
+        ///   → 用**类型**找（`OptionBehaviour` = 原版所有选项行的基类 ✓）+
+        ///     **名字**排除我们自己的（`LightConfigRow_*` / 在我们页里的 ✓）✓✓
+        /// </summary>
+        private static void SuppressForeignOptionRows(GameOptionsMenu menu)
+        {
+            try
+            {
+                var opts = menu.GetComponentsInChildren<OptionBehaviour>(true);
+                if (opts == null) return;
+
+                int hidden = 0;
+                foreach (var ob in opts)
+                {
+                    if (ob == null) continue;
+                    var go = ob.gameObject;
+                    if (go == null) continue;
+
+                    if (!go.activeSelf) continue;                                  // 已经关着 → 不管 ✓
+                    if (go.name.StartsWith(OurPrefix, StringComparison.Ordinal)) continue;   // 我们的行 ✓
+                    if (_page != null && go.transform.IsChildOf(_page.transform)) continue;  // 在我们页里的 ✓
+
+                    RememberHidden(go);          // ★ 记账 → 切回原版页签时能还原 ✓
+                    go.SetActive(false);
+                    hidden++;
+
+                    if (_foreignRowLogs < 10)
+                    {
+                        _foreignRowLogs++;
+                        LightLogger.Log($"[ConfigUIPanel] 压住了克隆菜单自带的原版行 '{go.name}' ✓" +
+                                        "（它会叠在我们的行上 ✗）");
+                    }
+                }
+
+                if (hidden > 0)
+                    LightLogger.Log($"[ConfigUIPanel] 本轮共压住 {hidden} 个原版行 ✓");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.SuppressForeignOptionRows] {ex.Message}");
+            }
+        }
+
+        private static int _foreignRowLogs;
+
+        /// <summary>
+        /// 关掉原版的 **`ScrollToSelection`** ✓。
+        ///
+        /// ⚠️⚠️ 2026-10-10 用户报「空引用」，日志实证：
+        /// <code>
+        ///   NullReferenceException
+        ///     UnityEngine.Transform.get_localPosition ()
+        ///     ScrollToSelection.LateUpdate ()          ← 原版组件 ✗
+        /// </code>
+        ///   它每帧去读"当前选中项"的 `localPosition` ✗ —— 而我们**隐藏/换页**把它的目标弄没了 ✗
+        ///   → 每帧抛 NRE ✓✓（我们不需要"滚动到选中项"这个功能 ✓，直接断电 ✓）
+        /// </summary>
+        private static void DisableVanillaScrollToSelection(GameOptionsMenu menu)
+        {
+            try
+            {
+                var comps = menu.GetComponentsInChildren<ScrollToSelection>(true);
+                if (comps == null) return;
+
+                int disabled = 0;
+                for (int i = 0; i < comps.Length; i++)
+                {
+                    var c = comps[i];
+                    if (c == null) continue;
+                    if (!c.enabled) continue;
+                    c.enabled = false;
+                    disabled++;
+                }
+                if (disabled > 0)
+                    LightLogger.Log($"[ConfigUIPanel] 已关掉 {disabled} 个原版 ScrollToSelection ✓（它每帧读已隐藏的选中项 → 空引用 ✗）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogDebug($"[ConfigUIPanel.DisableVanillaScrollToSelection] {ex.Message}");
+            }
+        }
+
+        /// <summary>数一数原版行里**当前显示着**的有几个（&gt;0 就说明漏出来了 ✓）</summary>
+        private static int CountActiveVanillaRows(GameOptionsMenu menu)
+        {
+            int n = 0;
+            var children = menu.Children;
+            if (children != null)
+            {
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var ch = children[i];
+                    if (ch == null) continue;
+                    if (ch.gameObject.activeSelf) n++;
+                }
+            }
+            return n;
+        }
+
+        /// <summary>上一次"可见行集合"的签名（用来防抖，见 Refresh ✓）</summary>
+        private static string _lastVisibilitySig = "";
+
+        /// <summary>
+        /// 把"当前应显示的行 + 实际建出的行"算成一个签名 ✓ ——
+        /// 签名没变 = 结构不需要动 ✓（防止每帧反复删建导致滚动位置被归零 ✗）
+        /// </summary>
+        private static string VisibilitySignature()
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder(256);
+                foreach (var block in ConfigRegistry.Blocks)
+                {
+                    if (block == null) continue;
+                    if (_singleBlock != null && block != _singleBlock) continue;
+                    if (!MatchesFilter(block)) continue;
+
+                    foreach (var item in block.Items)
+                    {
+                        if (item == null) continue;
+                        sb.Append(item.Key).Append(item.IsVisible ? '+' : '-').Append(';');
+                    }
+                }
+                sb.Append("built:");
+                foreach (var kv in _drivers)
+                    if (kv.Key != null) sb.Append(kv.Key.Key).Append(';');
+
+                return sb.ToString();
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// 把滚动位置归零（换页/重开面板时调用 ✓）。
+        /// ⚠️ **绝不能**放在每帧路径里 ✗ —— 那正是"滚不动"的根因（见 UpdateScrollBounds 注释 ✓）
+        /// </summary>
+        private static void ResetScrollToTop()
+        {
+            try
+            {
+                var host = _hostMenu ?? _templates;
+                var sb = host != null ? host.scrollBar : null;
+                if (sb == null) return;
+
+                var inner = sb.Inner;
+                if (inner == null) return;
+
+                var lp = inner.localPosition;
+                inner.localPosition = new Vector3(lp.x, 0f, lp.z);
+                _lastContentHeight = -1f;      // 让下一次范围计算重新记一遍 ✓
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.ResetScrollToTop] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 打印**每一行**的 y 与容器可视范围 ✓ —— 用来判定"外泄"到底是
+        /// ①该隐藏的没隐藏 ✗ 还是 ②行跑到窗口外面去了 ✗
+        /// </summary>
+        private static void LogRowLayoutOnce()
+        {
+            try
+            {
+                if (_rowLayoutLogs >= 8) return;
+                _rowLayoutLogs++;
+
+                var host = _hostMenu ?? _templates;
+                float top = host != null ? StartYFor(host) : 0f;
+                float viewport = host != null ? MeasureViewportHeight(host) : 0f;
+                float bottom = top - viewport;
+
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append($"[ConfigUIPanel][布局取证] 可视区 y=[{bottom:F2}, {top:F2}]（高 {viewport:F2}）行={_drivers.Count}：");
+
+                foreach (var kv in _drivers)
+                {
+                    var it = kv.Key;
+                    var drv = kv.Value;
+                    if (it == null || drv == null || drv.gameObject == null) continue;
+
+                    float y = drv.gameObject.transform.localPosition.y;
+                    bool outside = y > top + 0.01f || y < bottom - 0.01f;
+                    sb.Append(' ').Append(it.Key)
+                      .Append("(y=").Append(y.ToString("F2"))
+                      .Append(it.IsVisible ? "" : " **不该显示**")
+                      .Append(outside ? " **超出可视区**" : "")
+                      .Append(')');
+                }
+
+                LightLogger.Log(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[ConfigUIPanel.LogRowLayoutOnce] {ex.Message}");
+            }
+        }
         private const string DebugKey = "lid.debug.dummyCount";
         private const string EnabledKey = "lid.debug.enabled";
 
@@ -2497,6 +3143,12 @@ namespace Light.UI.Config
 
                 LightLogger.Log($"[ConfigUIPanel] 增量更新可见性：+{toAdd.Count} 行 / -{toRemove.Count} 行" +
                                 $"（现共 {_drivers.Count} 行，未整页重建）");
+
+                // ★ 2026-10-06 取证（用户报「职业详情页里减少最大数量 → 一些配置项**外泄**」）：
+                //   我目前**分不清**是"该隐藏的行没隐藏"还是"行跑出了窗口范围" ✗，
+                //   所以把**每行的 y 与容器可视范围**打出来 ✓ —— 一看便知 ✓
+                //   （按工程规矩：先取证，别猜 ✓）
+                LogRowLayoutOnce();
                 return true;
             }
             catch (Exception ex)

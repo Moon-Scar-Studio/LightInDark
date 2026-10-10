@@ -81,7 +81,27 @@ namespace Light.Patches
                             "  → 接下来要查的是「谁销毁了这个元素」,而不是继续放大这里的异常。");
                     }
 
-                    return false;                  // 跳过原版,止住刷屏
+                    // ★★ 2026-10-06 用户要求「能修还是顺便修一下」—— 这里**真正把它摘掉** ✓✓
+                    //    原来只是 `return false` 跳过每帧的原版 Update ✗：
+                    //      · 那个 SlicedAspectScaler **从此永久不工作** ✗（缩放功能静默失效 ✓）
+                    //      · 死引用一直在列表里 → 每次进来都要重扫 ✓
+                    //    现在把它从 `objectsToScale` 移除 ✓ → 列表恢复健康 ✓
+                    //    → 下一帧起原版 Update 照常跑（缩放功能回来了 ✓）且不再 NRE ✓
+                    //    ⚠️ 摘掉之后**继续扫**（可能还有别的死引用 ✓）→ 所以是 `i--` + `continue` ✓
+                    try
+                    {
+                        objs.RemoveAt(i);
+                        i--;
+                        LightLogger.Log($"[AspectScaler守卫] 已把死引用（原下标 [{i + 1}]）从 objectsToScale 移除 ✓" +
+                                        $"剩余 {objs.Count} 个元素");
+                    }
+                    catch (Exception ex)
+                    {
+                        LightLogger.LogWarning($"[AspectScaler守卫] 摘除死引用失败(本帧仍跳过原版): {ex.Message}");
+                        return false;
+                    }
+
+                    continue;
                 }
             }
             catch (Exception ex)

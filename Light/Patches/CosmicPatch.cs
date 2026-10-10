@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -12,6 +12,14 @@ public static class CosmicPatch
     [HarmonyPostfix]
     public static void HatManagerInit_Postfix(HatManager __instance)
     {
+        // ★ 自定义装扮（CosmicAddons）注册的**最佳时机** ✓✓
+        //   —— 就在 `HatManager.Initialize` 的 postfix：`allHats/allSkins/allVisors/allNamePlates`
+        //      刚由 `GetSorted(Refdata.…)` 建好（HatManager.cs L117 起 ✓），`Instance` 也已就绪 ✓
+        //   ⚠️ 放在最前面（早于下面那个 `UnlockAllCosmic` 的 early-return ✓），否则开关没开就永远不注册 ✗
+        //   `CosmicRegistry.Build()` 幂等 ✓，页签/大厅那两处也会调（都是保险 ✓）
+        try { Cosmic.CosmicRegistry.Build(); }
+        catch (Exception ex) { LightInDark.Core.LightLogger.LogWarning($"[CosmicPatch] 装扮注册失败：{ex.Message}"); }
+
         if (!LightPlugin.LightSettingsData.UnlockAllCosmic) return;
         foreach (var v in __instance.allVisors) v.Free = true;
         foreach (var v in __instance.allStarBundles) v.price = 0;

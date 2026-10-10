@@ -79,7 +79,7 @@ public static class DetailPopup
 
             BorderThickness = 0f,                               // ★ 0 = 不画那 4 条细条 ✓
             PadX = 0.20f,
-            PadY = 0.12f,
+            PadY = 0.08f,
             MinWidth = 0.30f,
             MinHeight = 0.20f,
             MaxWidth = 0f,
@@ -98,7 +98,7 @@ public static class DetailPopup
             Text = new UColor(1f, 1f, 1f, 1f),
             BorderThickness = 0f,
             PadX = 0.20f,
-            PadY = 0.12f,
+            PadY = 0.08f,
             MinWidth = 0.30f,
             MinHeight = 0.20f,
             MaxWidth = 0f,
@@ -116,7 +116,7 @@ public static class DetailPopup
             Text = new UColor(1f, 0.95f, 0.85f, 1f),
             BorderThickness = 0.020f,
             PadX = 0.20f,
-            PadY = 0.12f,
+            PadY = 0.08f,
             MinWidth = 0.30f,
             MinHeight = 0.20f,
             MaxWidth = 0f,
@@ -148,49 +148,19 @@ public static class DetailPopup
     {
         try
         {
-            // ⚠️ `ConfigRegistry` 是**静态类**，不能赋给变量 ✗（编译期就报 CS0119/CS0723）
-            static float F(string key, float fallback)
-            {
-                try { return LightInDark.Configuration.ConfigRegistry.Get(key)?.GetFloat() ?? fallback; }
-                catch { return fallback; }
-            }
-            static int I(string key, int fallback)
-            {
-                try { return LightInDark.Configuration.ConfigRegistry.Get(key)?.GetInt() ?? fallback; }
-                catch { return fallback; }
-            }
-
-            int palette = I("lid.detail.palette", 0);
-            var s = palette switch
-            {
-                1 => DetailPopupStyle.Classic,      // 深灰 + 淡金（旧观感）
-                2 => CardStyle(),                   // 白卡 + 深边
-                3 => DetailPopupStyle.NebulaDark,   // ★ Nebula 观感（深灰黑纯色底 ✓）
-                _ => DetailPopupStyle.Default,      // 淡灰 + 淡黑（默认 ✓）
-            };
-
-            s.FontScale = F("lid.detail.fontScale", s.FontScale);
-            s.PadX = F("lid.detail.padX", s.PadX);
-            s.PadY = F("lid.detail.padY", s.PadY);
-            s.MinWidth = F("lid.detail.minWidth", s.MinWidth);
-            s.MinHeight = F("lid.detail.minHeight", s.MinHeight);
-            s.MaxWidth = F("lid.detail.maxWidth", s.MaxWidth);
-            s.BorderThickness = F("lid.detail.borderThickness", s.BorderThickness);
-
-            s.Align = I("lid.detail.align", 0) switch
-            {
-                1 => TextAlignmentOptions.Left,
-                2 => TextAlignmentOptions.Right,
-                _ => TextAlignmentOptions.Center,
-            };
+            // ★★ 2026-10-10 用户要求「把详情框的配置项删掉，写死就行」✓
+            //    → 配置项全部删除（`DetailPopupConfigRegistrar.Register()` 已不再调用 ✓）
+            //    → 样式**写死**：深灰填充 + 白字 + 无边框（用户看图后指定的那套 ✓）
+            //      要改外观就改 `DetailPopupStyle.Default` 这一个地方 ✓
+            //    ⚠️ 本方法保留（调用点不动 ✓），它现在只做"应用写死的样式" ✓
+            var s = DetailPopupStyle.Default;
 
             // 只在真的变了才写回（避免每帧重建/刷日志 ✓）
             if (!StyleEquals(Style, s))
             {
                 Style = s;
                 ApplyStyleToExisting();
-                LightLogger.Log($"[DetailPopup] 样式已更新（配色={palette} 字号×{s.FontScale:0.##} " +
-                                $"留白={s.PadX:0.##}/{s.PadY:0.##} 边框={s.BorderThickness:0.###} 对齐={s.Align}）");
+                LightLogger.Log("[DetailPopup] 样式已写死为默认（深灰填充 + 白字 + 无边框）✓");
             }
         }
         catch (Exception ex)
@@ -396,7 +366,33 @@ public static class DetailPopup
     /// </summary>
     private static SpriteRenderer? _frame;
     private static Sprite? _frameSprite;
-    private static Sprite? _innerSprite;
+
+    /// <summary>代码画出来的圆角面板九宫格图（见 <see cref="RoundedPanelSprite"/> ✓）</summary>
+    private static Sprite? _panelSprite;
+
+    /// <summary>
+    /// 按**当前样式**生成圆角面板图（配色变了会自动重画 —— 缓存键含颜色 ✓）。
+    ///
+    /// 设计（用户让我自己拿主意 ✓）：
+    ///   · 底：近黑偏蓝 `#121319`、alpha 0.96 —— 半透明能透出一点背景、又不影响读字 ✓
+    ///   · 边：**1px 淡金发丝**（模组强调色，透明度 0.55 —— 克制，不抢眼 ✓）
+    ///   · 圆角：10px ✓
+    /// </summary>
+    private static Sprite? EnsurePanelSprite()
+    {
+        try
+        {
+            var fill = new UColor(0.07f, 0.075f, 0.10f, 0.86f);
+            var border = new UColor(1f, 0.90f, 0.63f, 0.55f);
+            return RoundedPanelSprite.Get(fill, border, radius: 10, borderWidth: 5);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogWarning($"[DetailPopup.EnsurePanelSprite] {ex.Message}");
+            return null;
+        }
+    }
+
     private static SpriteRenderer? _top;
     private static SpriteRenderer? _bottom;
     private static SpriteRenderer? _left;
@@ -590,16 +586,19 @@ public static class DetailPopup
         // 半透明灰底
         _fill = MakePart("Fill", Vector3.zero, Style.Fill, white);
 
-        // ★ 复制来的 Nebula 材质：**只用中间填充图** ✓
-        //   用户 2026-10-06 看图后明确要求："改成白字，把边框扔掉，只要中间填充物" ✓
-        //   → 边框（`DetailFrame` 那张九宫格 + 4 条细条）**一律不用** ✗
-        _innerSprite = LoadSlicedSprite("Light.Resources.UI.DetailInner.png", 100f, 8);
-        if (_innerSprite != null && _fill != null)
+        // ★ 背景 = **代码画的圆角面板**（用户 2026-10-06：外部素材难看，让代码画一份 ✓）
+        //   设计取舍（我的审美 ✓）：
+        //     · 近黑半透明底 #12131A(0.96) —— 压住背后菜单文字、又不死黑 ✓
+        //     · **1px 淡金发丝边框**（用模组自己的强调色 ✓，比粗边框精致得多 ✓）
+        //     · **10px 圆角** ✓（九宫格边距 = 圆角，拉伸不变形 ✓）
+        _panelSprite = EnsurePanelSprite();
+        if (_panelSprite != null && _fill != null)
         {
-            _fill.sprite = _innerSprite;
+            _fill.sprite = _panelSprite;
             _fill.drawMode = SpriteDrawMode.Sliced;
+            _fill.color = UColor.white;   // 颜色已经画进图里了 → 别再多乘一次 ✗
         }
-        HidePart(_frame);   // 边框不要 ✓
+        HidePart(_frame);   // 不再用 Nebula 的边框图 ✓
 
         // 淡金细边框（四条细条；z 略小 = 更靠前）
         _top = MakePart("BorderTop", Vector3.zero, Style.Border, white);

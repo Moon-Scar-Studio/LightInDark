@@ -37,7 +37,7 @@ namespace LightInDark.Configuration;
 public static class PresetCodec
 {
     /// <summary>载荷格式版本。改了编码规则就 +1，旧文件会被判为不兼容而不是读错。</summary>
-    public const int FormatVersion = 1;
+    public const int FormatVersion = 2;
 
     private const string Base36Digits = "0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -53,6 +53,18 @@ public static class PresetCodec
             .OrderBy(k => k, StringComparer.Ordinal);
 
         return Fnv1aBase36(string.Join("\u0001", keys));
+    }
+
+    /// <summary>把 "v2" 这样的版本串解析成数字（解析不出来当 1 = 最老的格式 ✓）</summary>
+    private static int ParseVersion(string token)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(token)) return 1;
+            if (token[0] == 'v' || token[0] == 'V') token = token[1..];
+            return int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : 1;
+        }
+        catch { return 1; }
     }
 
     /// <summary>当前注册表里的配置项条数（用来把"不匹配"的原因说清楚）。</summary>
@@ -77,7 +89,10 @@ public static class PresetCodec
         for (int i = 0; i < items.Count; i++)
         {
             if (i > 0) sb.Append(',');
-            sb.Append(EncodeOne(items[i]));
+            // ⚠️ v2：值的**前面带上 key** ✓（原来是"只按位置存值" ✗）
+            //    用户 2026-10-06 要求："当前配置项少于预设项时……" —— 要支持"旧预设项更少也能加载"，
+            //    就必须能**按 key 对上号** ✓；只按位置的写法一旦两边项数不同就整体错位 ✗
+            sb.Append(items[i].Key).Append('=').Append(EncodeOne(items[i]));
         }
         return sb.ToString();
     }
@@ -101,27 +116,70 @@ public static class PresetCodec
             if (head[0] != "v" + FormatVersion)
                 return (false, $"载荷版本是 {head[0]}，本版本只认 v{FormatVersion}");
 
-            var expectedHash = RegistryKeyHash();
-            if (!string.Equals(head[2], expectedHash, StringComparison.Ordinal))
-                return (false, $"预设与当前版本不匹配（指纹 {head[2]} ≠ {expectedHash}）" +
-                               "—— 配置项的增删改会让旧预设失效，这是故意的");
+            // ★★ 2026-10-06 用户要求放宽判定（原来"指纹一变就整份拒绝"太严 ✗）：
+            //    新规则：
+            //      · 预设的**格式版本比我们新** → 拒绝 ✓（未来版本，读不懂）
+            //      · 预设记的**配置项比我们现在多** → 拒绝 ✓（例：预设 20 项、当前只有 8 项）
+            //      · 其余情况**按 key 逐项应用** ✓，本版本没有的项**跳过**并报数 ✓
+            if (!int.TryParse(head[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int count))
+                return (false, $"条数字段不是数字：'{head[1]}'");
+
+            int fileVersion = ParseVersion(head[0]);
+
+            if (fileVersion > FormatVersion)
+                return (false, $"预设格式版本比本版本新（{head[0]} > v{FormatVersion}）—— 拒绝加载");
 
             var items = ConfigRegistry.All
                 .Where(i => i != null && !string.IsNullOrEmpty(i.Key))
                 .OrderBy(i => i.Key, StringComparer.Ordinal)
                 .ToList();
 
-            if (!int.TryParse(head[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int count))
-                return (false, $"条数字段不是数字：'{head[1]}'");
-
-            if (count != items.Count)
-                return (false, $"条数不符：文件里是 {count}，当前有 {items.Count}");
+            if (count > items.Count)
+                return (false, $"预设里的配置项比当前版本多（文件 {count} 项，当前 {items.Count} 项）—— 拒绝加载");
 
             // ⚠️ 值表里**不能**再按 '|' 切 —— Float 的 round-trip 串不会含 '|'，
             //    但为了以后扩类型安全，这里用 '|' 之后**剩余的全部**再按 ',' 切。
             int barIdx = payload.IndexOf('|', payload.IndexOf('|', payload.IndexOf('|') + 1) + 1);
             var tail = barIdx >= 0 ? payload[(barIdx + 1)..] : "";
             var tokens = tail.Length == 0 ? Array.Empty<string>() : tail.Split(',');
+
+            // ── v2：key=value，按 key 应用（缺的跳过 ✓）──
+            if (fileVersion >= 2)
+            {
+                var byKey = new Dictionary<string, ConfigItem>(StringComparer.Ordinal);
+                foreach (var it in items) byKey[it.Key] = it;
+
+                var pending = new List<(ConfigItem Item, float Value)>();
+                int skipped = 0;
+
+                foreach (var token in tokens)
+                {
+                    if (string.IsNullOrEmpty(token)) continue;
+                    int eq = token.IndexOf('=');
+                    if (eq <= 0) return (false, $"值格式不对（缺少 key=value 形式）：'{token}'");
+
+                    string key = token[..eq];
+                    string raw = token[(eq + 1)..];
+
+                    if (!byKey.TryGetValue(key, out var item)) { skipped++; continue; }   // 本版本没有 → 跳过 ✓
+
+                    if (!TryDecodeOne(item, raw, out float v, out var why))
+                        return (false, $"配置项 {key} 解析失败：{why}");
+
+                    pending.Add((item, v));
+                }
+
+                for (int i = 0; i < pending.Count; i++)
+                    pending[i].Item.SetValueSilently(pending[i].Value);
+
+                return (true, skipped > 0
+                    ? $"已应用 {pending.Count} 项，跳过 {skipped} 项（本版本没有的配置项）"
+                    : $"已应用 {pending.Count} 项");
+            }
+
+            // ── v1：老格式，只能按位置应用（要求项数一致 ✓）──
+            if (count != items.Count)
+                return (false, $"旧格式预设（v1）只能整份加载：文件 {count} 项，当前 {items.Count} 项");
 
             if (tokens.Length != items.Count)
                 return (false, $"值的个数不符：文件里是 {tokens.Length}，当前有 {items.Count}");
@@ -138,7 +196,7 @@ public static class PresetCodec
             for (int i = 0; i < items.Count; i++)
                 items[i].SetValueSilently(parsed[i]);
 
-            return (true, $"已应用 {items.Count} 项");
+            return (true, $"已应用 {items.Count} 项（旧格式 v1）");
         }
         catch (Exception ex)
         {

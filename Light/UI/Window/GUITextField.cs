@@ -365,12 +365,33 @@ public class TextFieldBehaviour : MonoBehaviour
             ValidField = null;
             if (Pipe != null) Pipe.text = "";
 
-            LightLogger.LogDebug($"[TextFieldBehaviour] 失焦 ← {gameObject.name}");
+            // ⚠️ 2026-10-06 用户报 `LoseFocus` 抛 NRE（堆栈落在 `Component.get_gameObject()`）——
+            //    原因：**组件已被销毁**时访问 `gameObject` ✗（关窗/换场景都会走到这里 ✓）
+            //    → 名字**第一次用时就缓存**（那时对象还活着 ✓），之后只读字符串 ✓
+            //    → 这行日志本身**再包一层 try**：它只是调试输出，绝不能因为它报错 ✗
+            try { LightLogger.LogDebug($"[TextFieldBehaviour] 失焦 ← {SafeName()}"); } catch { }
         }
         catch (Exception ex)
         {
-            LightLogger.LogError("[TextFieldBehaviour.LoseFocus]", ex);
+            // ⚠️⚠️ 2026-10-10 日志实证：**catch 里不能再碰 `ex`** ✗✗
+            //    `ex` 是 Il2Cpp 异常包装 ✓，读它的 `Message` 会**再抛一次**（NRE ✓）→
+            //    异常从 catch 里逃出去 → 被 FirstChance 记录器抓住 → **日志刷屏** ✗
+            //    → 这里只打一句固定文本 ✓（要细节就看它外层已经记下的 `[异常堆栈]` ✓）
+            try { LightLogger.LogWarning("[TextFieldBehaviour.LoseFocus] 失焦时对象已销毁（已忽略）"); } catch { }
         }
+    }
+
+    /// <summary>缓存自己的名字（第一次调用时对象还活着 ✓，之后永不访问 gameObject ✓）</summary>
+    private string? _cachedName;
+    private string SafeName()
+    {
+        try
+        {
+            if (_cachedName != null) return _cachedName;
+            _cachedName = gameObject != null ? gameObject.name : "?";
+        }
+        catch { _cachedName = "?"; }
+        return _cachedName;
     }
 
     /// <summary>把一串字符吃进 Value（支持退格 / 回车 / 光标处插入）。</summary>

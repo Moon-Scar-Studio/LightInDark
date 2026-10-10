@@ -88,10 +88,17 @@ public partial class LightPlugin : BasePlugin
             ColorData = MainColor.LoadChatColor(); // 存颜色
             PaletteColorOverride.Apply(); // 我也不知道。
             LoadRole(); // 加载职业
+
+            // ★ 自定义装扮插件（CosmicAddons/*.zip）：发现 + 解析 + 建注册表 ✓
+            //   （注入游戏的 patch 在 Light\Cosmic\CosmicPatches.cs ✓；目录不存在会自动创建 ✓）
+            try { Cosmic.CosmicAddonLoader.Load(); }
+            catch (Exception ex) { LightLogger.LogWarning($"[Load] 装扮插件加载失败：{ex.Message}"); }
             RoleConfigRegistrar.Register();   // 职业配置块 + 职业专属项
             Light.Config.AssignmentConfigRegistrar.Register();   // 分配设置（船员/内鬼/中立上限，审查 B7）
             Light.Config.HudLayoutConfigRegistrar.Register();    // HUD 布局（小 HUD / 按钮排列，第 5 批）
-            Light.Config.DetailPopupConfigRegistrar.Register();  // 详情框（配色/字号/留白/尺寸/边框/对齐）
+            // ⚠️ 详情框的配置项**已删除**（用户 2026-10-10："把详情框的配置项删掉，写死就行" ✓）
+            //    样式现在写死在 `DetailPopupStyle.Default` 里 ✓（要改就改那一个地方 ✓）
+            //    `DetailPopupConfigRegistrar.Register()` 不再调用 ✓（文件保留但不再注册，避免误用 ✗）
 
             // ★ 职业系统启动自检（2026-10-06）：把"能不能出 / 上限 / 概率 / 翻译是否解析成功 /
             //   Id 是否重复"一次性打进日志 —— 审查里那 50+ 条问题绝大多数是**静默失效**，
