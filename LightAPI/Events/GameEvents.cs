@@ -6,6 +6,40 @@ namespace LightInDark.Events
     //  游戏流程事件
     // =====================================================================
 
+    /// <summary>
+    /// **尸体生成时触发** ✓（2026-10-25 新增，对照 NOS 的 `DeadBodyInstantiateEvent`）
+    /// <para>用于"尸体指引箭头 / 尸体特效 / 尸体变色"这类需要**尸体对象本身**的功能 ✓</para>
+    /// <para>⚠️ 只在**击杀**时触发；放逐没有尸体 ✗</para>
+    /// </summary>
+    public class DeadBodyInstantiateEvent : IEvent
+    {
+        /// <summary>死者 ✓</summary>
+        public PlayerControl Player { get; init; }
+
+        /// <summary>刚生成的尸体对象 ✓（原版的 `DeadBody`）</summary>
+        public DeadBody DeadBody { get; init; }
+
+        /// <summary>凶手（自杀/无凶手时 null ✓）</summary>
+        public PlayerControl Killer { get; init; }
+
+        /// <summary>死因状态（`PlayerState`：`BeKilled` / `Vanish` / `Burst` … ✓）</summary>
+        public Game.PlayerState State { get; init; } = Game.PlayerState.BeKilled;
+
+        /// <summary>尸体世界坐标（拿不到对象时的兜底 ✓）</summary>
+        public Vector2? Position { get; init; }
+
+        public DeadBodyInstantiateEvent() { }
+        public DeadBodyInstantiateEvent(PlayerControl player, DeadBody deadBody, PlayerControl killer = null,
+                                        Game.PlayerState state = Game.PlayerState.BeKilled, Vector2? position = null)
+        {
+            Player = player;
+            DeadBody = deadBody;
+            Killer = killer;
+            State = state;
+            Position = position;
+        }
+    }
+
     /// <summary>游戏开始时触发。</summary>
     public class GameStartEvent : IEvent
     {

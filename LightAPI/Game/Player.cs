@@ -58,6 +58,32 @@ namespace LightInDark.Game
             }
         }
         public RuntimeRoleTemplate Role { get; internal set; }
+
+        // ═════════════════════════════════════════════════════════════════════
+        //  「能不能被赌怪赌杀」—— 2026-10-25 用户要求：
+        //  "看看赌怪，给玩家留一个设置能不能被赌杀的bool"
+        //
+        //  两级：① 职业默认 = RoleTemplate.CanBeGuessed（覆写即可 ✓）
+        //        ② 玩家级覆盖 = 这里的 setter（临时/单个玩家用 ✓，优先于职业默认 ✓）
+        //  ⚠️ 不写覆盖时**实时**读职业默认 → 中途换职业会自动跟着变 ✓
+        //  ⚠️ Player 是每局新建的 → 覆盖值换局自然清空 ✓（不用手动重置）
+        // ═════════════════════════════════════════════════════════════════════
+
+        private bool? _canBeGuessedOverride;
+
+        /// <summary>
+        /// **这个玩家能不能被赌怪赌杀**（默认取职业的 <see cref="RoleTemplate.CanBeGuessed"/> ✓）
+        /// <para>赌怪猜中时检查这个；为 false 时**不会死、也不消耗次数** ✓</para>
+        /// <para>写它 = 玩家级覆盖（优先于职业默认 ✓）；要恢复职业默认用 <see cref="ResetCanBeGuessed"/></para>
+        /// </summary>
+        public bool CanBeGuessed
+        {
+            get => _canBeGuessedOverride ?? (Role?.Role?.CanBeGuessed ?? true);
+            set => _canBeGuessedOverride = value;
+        }
+
+        /// <summary>清掉玩家级覆盖 → 重新跟随职业默认 ✓</summary>
+        public void ResetCanBeGuessed() => _canBeGuessedOverride = null;
         /// <summary>Victory identity retained when a ghost role replaces abilities after death.</summary>
         public RoleTemplate VictoryRole { get; private set; }
 
@@ -369,6 +395,140 @@ namespace LightInDark.Game
             catch (Exception ex)
             {
                 LightLogger.LogError("Player.MurderPlayer", ex);
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        //  Buff（限时效果）—— 2026-10-25 用户要求：接到 Player 上，作为方法 ✓
+        //
+        //  用法：
+        //    player.GiveBuff(Buffs.SpeedBuff.Instance, 8f, "sheriff.dash");   // 类型 / 时长 / key ✓
+        //    player.GiveBuff(SomeBuff.Def, -1f, key: "x");                     // -1 = 用定义里的默认时长 ✓
+        //    player.RemoveBuff("sheriff.dash");                                // 按 key（推荐 ✓）
+        //    player.RemoveBuff(Buffs.SpeedBuff.Instance);                      // 按类型 ✓
+        //    player.RemoveAllBuffs();                                          // 全清 ✓
+        //    Player.RemoveBuffsByPlayerName("名字", key: "sheriff.dash");       // 按玩家名 ✓
+        //  ⚠️ 只有**房主**的调用会同步给别人 ✓（非房主只影响本地，房主是唯一真相 ✓）
+        // ═════════════════════════════════════════════════════════════════════
+
+        /// <summary>当前身上的 Buff（只读）✓</summary>
+        public IReadOnlyList<Modifiers.Buffs.RuntimeBuff> Buffs
+            => Modifiers.Buffs.BuffManager.Get(this);
+
+        /// <summary>
+        /// **给自己上 Buff**：本地生效 +（房主时）定向同步 ✓
+        /// </summary>
+        /// <param name="buff">Buff 类型（`BuffDefinition`）</param>
+        /// <param name="duration">时长（秒）；**负数 = 用定义里的默认时长**（定义本身也可能 &lt; 0 = 整局）</param>
+        /// <param name="key">
+        /// **实例键**（推荐填 ✓）：同一种 Buff 可以按不同来源并存，移除时按它最精确 ✓
+        /// 空 = 同类型只保留一个（旧行为）
+        /// </param>
+        /// <param name="canReceive">
+        /// **哪些玩家（客户端）需要收到这条同步** ✓（null = 除自己外全部）
+        /// 例：只有能看到你的玩家才需要知道 → <c>p =&gt; !p.IsDead || p.AmOwner</c>
+        /// </param>
+        public Modifiers.Buffs.RuntimeBuff GiveBuff(Modifiers.Buffs.BuffDefinition buff, float duration = -1f,
+                                                    string key = null, Func<Player, bool> canReceive = null)
+        {
+            try
+            {
+                if (buff == null) return null;
+                return Modifiers.Buffs.BuffSync.Give(this, buff, duration, key, canReceive);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("Player.GiveBuff", ex);
+                return null;
+            }
+        }
+
+        /// <summary>**按类型**移除（该类型全部实例）✓</summary>
+        /// <param name="type">要移除的 Buff 类型（`BuffDefinition`）✓</param>
+        /// <param name="canReceive">哪些玩家（客户端）需要收到这条移除同步（null = 除自己外全部 ✓）</param>
+        public int RemoveBuff(Modifiers.Buffs.BuffDefinition type, Func<Player, bool> canReceive = null)
+        {
+            try
+            {
+                if (type == null) return 0;
+                return Modifiers.Buffs.BuffSync.RemoveByType(this, type, canReceive);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("Player.RemoveBuff(type)", ex);
+                return 0;
+            }
+        }
+
+        /// <summary>**按 key** 移除（推荐 ✓，精确到某一次施加）</summary>
+        /// <param name="key">实例键（= `GiveBuff` 时传的那个 `key` ✓）</param>
+        /// <param name="canReceive">哪些玩家（客户端）需要收到这条移除同步（null = 除自己外全部 ✓）</param>
+        public int RemoveBuff(string key, Func<Player, bool> canReceive = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(key)) return 0;
+                return Modifiers.Buffs.BuffSync.RemoveByKey(this, key, canReceive);
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("Player.RemoveBuff(key)", ex);
+                return 0;
+            }
+        }
+
+        /// <summary>移除自己身上**全部** Buff ✓</summary>
+        /// <param name="canReceive">哪些玩家（客户端）需要收到这条清空同步（null = 除自己外全部 ✓）</param>
+        public void RemoveAllBuffs(Func<Player, bool> canReceive = null)
+        {
+            try { Modifiers.Buffs.BuffSync.RemoveAll(this, canReceive); }
+            catch (Exception ex) { LightLogger.LogError("Player.RemoveAllBuffs", ex); }
+        }
+
+        /// <summary>是否带有该 **key** 的 Buff ✓</summary>
+        /// <param name="key">实例键（`GiveBuff` 时传的 `key` ✓）</param>
+        public bool HasBuff(string key) => Modifiers.Buffs.BuffManager.HasKey(this, key);
+
+        /// <summary>是否带有该 **类型** 的 Buff ✓</summary>
+        /// <param name="type">Buff 类型（`BuffDefinition`）✓；不看的实例键，只要这种类型存在就算 true ✓</param>
+        public bool HasBuff(Modifiers.Buffs.BuffDefinition type)
+            => type != null && Modifiers.Buffs.BuffManager.Has(this, type.Key);
+
+        /// <summary>
+        /// **按玩家名**移除 Buff（名字取 `Player.Name` = 游戏内名字 ✓）。
+        /// 找不到同名玩家返回 0 ✓；同名多人时**全部**处理 ✓。
+        /// </summary>
+        /// <param name="playerName">目标玩家名（`Player.Name` ✓）；空/找不到 → 返回 0 ✓</param>
+        /// <param name="type">给了就只移除这个类型；null = 不限类型 ✓</param>
+        /// <param name="key">给了就只移除这个实例键（优先于类型 ✓）；null = 按类型/全部 ✓</param>
+        /// <param name="canReceive">哪些玩家（客户端）需要收到这条移除同步（null = 除自己外全部 ✓）</param>
+        public static int RemoveBuffsByPlayerName(string playerName, Modifiers.Buffs.BuffDefinition type = null,
+                                                  string key = null, Func<Player, bool> canReceive = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(playerName)) return 0;
+
+                var matches = FindAll(p => p != null && p.Name == playerName);
+                if (matches == null || matches.Count == 0)
+                {
+                    LightLogger.LogWarning($"[Buff] 按玩家名移除失败：找不到「{playerName}」");
+                    return 0;
+                }
+
+                int total = 0;
+                foreach (var p in matches)
+                {
+                    if (!string.IsNullOrEmpty(key)) total += p.RemoveBuff(key, canReceive);
+                    else if (type != null) total += p.RemoveBuff(type, canReceive);
+                    else { p.RemoveAllBuffs(canReceive); total++; }
+                }
+                return total;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("Player.RemoveBuffsByPlayerName", ex);
+                return 0;
             }
         }
 

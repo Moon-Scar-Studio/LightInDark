@@ -61,6 +61,11 @@ internal static class FreePlayControls
         var plainFont = Light.UI.Window.MenuTextTemplate2.Font;
         var plainMaterial = Light.UI.Window.MenuTextTemplate2.FontMaterial;
 
+        // ★ 2026-10-25 用户要求：自由模式左侧加「RPC 触发器」按钮（带搜索框，搜名字 / id ✓）
+        _buttons.Add(LightInDark.UI.Ability.AbilityButton.CreateForPlayer(local, new RoleButtonConfig
+        {
+            Label = "RPC 触发器",
+        }, () => DebugTools.RpcTriggerPanel.OpenWindow()));
         _buttons.Add(LightInDark.UI.Ability.AbilityButton.CreateForPlayer(local, new RoleButtonConfig
         {
             Label = "选择职业",

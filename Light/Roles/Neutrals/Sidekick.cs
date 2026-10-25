@@ -14,6 +14,10 @@ public class Sidekick : RoleTemplate
     public override string CodeName => Code;
     public override LightInDark.Color Color => Jackal.MyRole.Color;
     public override RoleCategory RoleCategory => RoleCategory.Neutral;
+    // ⚠️ TODO（2026-10-25）：RoleTemplate 里 From / RoleConfiguration 已改成 abstract，
+    //    这里先用**改造前的默认值**把构建恢复；需要真实"职业来源"时替换成实际值 ✓
+    public override string From => null;
+    public override RoleConfigBase[] RoleConfiguration => Array.Empty<RoleConfigBase>();
     public override NeutralType NeutralType => NeutralType.Evil;
     public override string TeamCode => Jackal.Code;
 

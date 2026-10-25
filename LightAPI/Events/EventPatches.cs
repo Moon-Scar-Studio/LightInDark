@@ -17,8 +17,17 @@ namespace LightInDark.Events
         {
             try
             {
+                // ★ 协程宿主自愈（2026-10-25）：宿主会在场景切换时被销毁（AGENTS §11.4）→
+                //   每帧检测一次（成本 = 一次引用比较 ✓），没了就重建 ✓
+                Core.LightCoroutine.Ensure();
+
                 if (AmongUsClient.Instance?.GameState != InnerNetClient.GameStates.Started) return;
                 EventTriggers.OnGameUpdate(Time.deltaTime);
+
+                // ★ 门事件：**不 patch 原版**，每帧比对 `AllDoors[i].IsOpen` ✓
+                //   （原来 patch `AutoOpenDoor.SetDoorway` 会导致原生 AV 崩游戏 ✗ 见 DoorWatcher 注释）
+                DoorWatcher.Tick();
+
                 EventTriggers.OnGameHudUpdate(Time.deltaTime);
                 EventTriggers.OnGameLateUpdate(Time.deltaTime);
             }
@@ -480,40 +489,26 @@ namespace LightInDark.Events
     //  门
     // =====================================================================
 
-    [HarmonyPatch(typeof(AutoOpenDoor), nameof(AutoOpenDoor.SetDoorway))]
-    public static class DoorwayPatch
-    {
-        public static bool Prefix(AutoOpenDoor __instance, bool open)
-        {
-            try
-            {
-                if (!open) return true;
-                var player = PlayerControl.LocalPlayer;
-                if (player == null) return true;
-
-                var ev = new PlayerTryOpenDoorLocalEvent(player, __instance);
-                EventSystem.RunEvent(ev);
-                return !ev.IsCanceled;
-            }
-            catch (Exception ex)
-            {
-                LightLogger.LogError("[EventPatch] DoorwayPatch.Prefix", ex);
-                return true;
-            }
-        }
-
-        public static void Postfix(AutoOpenDoor __instance, bool open)
-        {
-            try
-            {
-                if (!open) return;
-                var player = PlayerControl.LocalPlayer;
-                if (player == null) return;
-                EventTriggers.OnPlayerOpenDoor(player, __instance);
-            }
-            catch (Exception ex) { LightLogger.LogError("[EventPatch] DoorwayPatch.Postfix", ex); }
-        }
-    }
+    // ⚠️⚠️ 2026-10-25：**这里原来 patch 了 `AutoOpenDoor.SetDoorway`，已删除** ✗
+    //
+    //   崩溃（用户多开测试，两次稳定复现）：
+    //     Fatal error. System.AccessViolationException: Attempted to read or write protected memory.
+    //        at Il2CppInterop.Runtime.IL2CPP.il2cpp_runtime_invoke(IntPtr, IntPtr, Void**, IntPtr ByRef)
+    //        at DynamicClass.DMD<AutoOpenDoor::SetDoorway>(AutoOpenDoor, Boolean)
+    //        at DynamicClass.(il2cpp -> managed) SetDoorway(IntPtr, Byte, Il2CppMethodInfo*)
+    //
+    //   读原版源码（19.0）能看到**根因的形状**：
+    //     `SomeKindaDoor.SetDoorway(bool)`      ← **abstract**（`SomeKindaDoor.cs:8`）
+    //     `PlainDoor.SetDoorway(bool)`          ← override（`PlainDoor.cs:36`）
+    //     `AutoOpenDoor.SetDoorway(bool)`       ← 再 override（`AutoOpenDoor.cs:7`）
+    //   → `SetDoorway` 整条链是**抽象虚方法**：IL2CPP 把它的调用变成"thunk → managed"，
+    //     Harmony 的补丁体里再去 `il2cpp_runtime_invoke` 调原方法 → **原生侧 AV 直接崩游戏** ✗
+    //     （AV 不是托管异常，`try/catch` 兜不住 ✗ —— 所以日志里也没有我们的错误行 ✓）
+    //
+    //   现在的做法（**零补丁**）：`DoorWatcher.Tick()` 每帧读 `ShipStatus.AllDoors[i].IsOpen`，
+    //   发现 false → true 的跳变就触发 `PlayerOpenDoorEvent` ✓（只读属性，绝不碰原版调用链 ✓）
+    //   ⚠️ 代价：`PlayerTryOpenDoorLocalEvent` / `PlayerTryOpenDoorHostEvent` **不再触发**
+    //      （"可取消"必须有补丁才行 ✗ —— 为了不崩游戏，取消能力放弃 ✓）
 
     // =====================================================================
     //  玩家视觉（每帧）

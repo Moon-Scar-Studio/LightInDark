@@ -41,6 +41,84 @@ namespace LightInDark.RPCs
 
         private static readonly Dictionary<int, RpcEntry> _entries = new();
 
+        /// <summary>
+        /// **已注册的 RPC 清单**（给调试工具用 ✓ 2026-10-25 用户要求"RPC 触发器"）
+        /// <para>按名字排序 ✓，含参数类型（调试面板靠它显示 + 生成默认参数 ✓）</para>
+        /// </summary>
+        public static List<LidRpcInfo> GetRpcs()
+        {
+            var list = new List<LidRpcInfo>(_entries.Count);
+            foreach (var entry in _entries.Values)
+            {
+                try
+                {
+                    list.Add(new LidRpcInfo(entry.HashStr, entry.Hash, entry.OnlyHost, entry.Method, entry.Parameters));
+                }
+                catch { }
+            }
+            list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            return list;
+        }
+
+        /// <summary>**触发**一条已注册的 RPC（调试用 ✓）：参数按类型填默认值（byte → 本地玩家 id ✓）</summary>
+        /// <param name="info"><see cref="GetRpcs"/> 里的一项 ✓</param>
+        /// <param name="overrides">可选：按下标覆盖参数值 ✓（null 的项自动填默认 ✓）</param>
+        /// <returns>是否真的调用了 ✓</returns>
+        public static bool Invoke(LidRpcInfo info, object[] overrides = null)
+        {
+            if (info == null) return false;
+
+            try
+            {
+                var args = new object[info.Parameters.Length];
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (overrides != null && i < overrides.Length && overrides[i] != null)
+                    {
+                        args[i] = overrides[i];
+                        continue;
+                    }
+                    args[i] = DefaultArg(info.Parameters[i].ParameterType);
+                }
+
+                // 走正常调用（会被 Prefix 拦截 → 广播 + 本地执行 ✓，跟业务代码调它一模一样 ✓）
+                info.Method.Invoke(null, args);
+                LightLogger.Log($"[RpcTrigger] 已触发 {info.Name}（{(info.OnlyHost ? "OnlyHost" : "广播")}）参数：{Describe(args)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError($"[RpcTrigger] 触发 {info.Name} 失败", ex);
+                return false;
+            }
+        }
+
+        private static object DefaultArg(Type type)
+        {
+            try
+            {
+                if (type == typeof(byte))
+                    return PlayerControl.LocalPlayer != null ? PlayerControl.LocalPlayer.PlayerId : (byte)0;
+                if (type == typeof(string)) return "";
+                if (type == typeof(bool)) return false;
+                if (type == typeof(float)) return 0f;
+                if (type == typeof(int)) return 0;
+                if (type == typeof(PlayerControl)) return PlayerControl.LocalPlayer;
+                if (type == typeof(byte[])) return Array.Empty<byte>();
+                return type.IsValueType ? Activator.CreateInstance(type) : null;
+            }
+            catch { return null; }
+        }
+
+        private static string Describe(object[] args)
+        {
+            if (args == null || args.Length == 0) return "无";
+            var parts = new string[args.Length];
+            for (int i = 0; i < args.Length; i++)
+                parts[i] = args[i] == null ? "null" : args[i].ToString();
+            return string.Join(", ", parts);
+        }
+
         public static void ScanAndPatch(Harmony harmony)
         {
             try
@@ -95,6 +173,10 @@ namespace LightInDark.RPCs
                 }
 
                 LightLogger.Log($"[LidRPC] 扫描完成，共 {_entries.Count} 个 RPC");
+
+                // ★ 2026-10-25：Buff 的定向同步 RPC（不走 LidRPC 的"全广播"，见 BuffSync 的注释 ✓）
+                //    每个客户端都会跑到这里（Light\LightPlugin.cs:90 / LightAPI\LIDPlugin.cs:44）✓
+                Modifiers.Buffs.BuffSync.EnsureRegistered();
             }
             catch (Exception ex)
             {
@@ -308,5 +390,52 @@ namespace LightInDark.RPCs
             for (int i = 0; i < len; i++) arr[i] = reader.ReadString();
             return arr;
         }
+    }
+/// <summary>
+    /// **一条已注册 RPC 的元信息**（调试工具用 ✓ 2026-10-25）
+    /// </summary>
+    public sealed class LidRpcInfo
+    {
+        /// <summary>完整名（`命名空间.类.方法` ✓，调试面板搜名字用得到 ✓）</summary>
+        public string Name { get; }
+
+        /// <summary>短名（只有方法名 ✓）</summary>
+        public string ShortName { get; }
+
+        /// <summary>常量哈希（= 网络里的 id ✓，搜 id 就用它 ✓）</summary>
+        public int Hash { get; }
+
+        /// <summary>是否只接受房主 ✓</summary>
+        public bool OnlyHost { get; }
+
+        /// <summary>被 patch 的静态方法 ✓</summary>
+        public System.Reflection.MethodInfo Method { get; }
+
+        /// <summary>形参（含名字 ✓）</summary>
+        public System.Reflection.ParameterInfo[] Parameters { get; }
+
+        /// <summary>显示用签名，如 `StartMeeting(byte reporterId, byte reportedId)` ✓</summary>
+        public string Signature { get; }
+
+        public LidRpcInfo(string name, int hash, bool onlyHost,
+                          System.Reflection.MethodInfo method,
+                          System.Reflection.ParameterInfo[] parameters)
+        {
+            Name = name ?? "";
+            Hash = hash;
+            OnlyHost = onlyHost;
+            Method = method;
+            Parameters = parameters ?? System.Array.Empty<System.Reflection.ParameterInfo>();
+
+            int dot = Name.LastIndexOf('.');
+            ShortName = dot >= 0 && dot + 1 < Name.Length ? Name.Substring(dot + 1) : Name;
+
+            var parts = new string[Parameters.Length];
+            for (int i = 0; i < Parameters.Length; i++)
+                parts[i] = Parameters[i].ParameterType.Name + " " + Parameters[i].Name;
+            Signature = ShortName + "(" + string.Join(", ", parts) + ")";
+        }
+
+        public override string ToString() => Signature;
     }
 }

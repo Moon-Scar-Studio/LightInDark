@@ -40,6 +40,12 @@
 	<PropertyGroup Condition="$(TargetFramework.Contains('android'))">
 		<DefineConstants>$(DefineConstants);ANDROID</DefineConstants>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <!-- 2026-10-25 移除：这是 2026-10-02 的**备份文件**（NOS 原版代码），不该参与编译 ✗
+       它引用了 NebulaRPCHolder / DefinedSingleAbilityRoleTemplate / HasCitation 等 NOS 类型 → 88 个 CS0246 ✓
+       真正的新职业请写在 Roles\Impostors\Camouflager.cs（不带 1）✓ -->
+	</ItemGroup>
     <ItemGroup>
       <Folder Include="Components\" />
       <Folder Include="Resources\News\" />

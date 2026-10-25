@@ -19,11 +19,27 @@ namespace LightInDark.Roles
         /// <summary>唯一内部名（语言/配置键前缀）。必须重写。</summary>
         public abstract string CodeName { get; }
 
-        /// <summary>职业颜色（名字/开场白/配置头着色）。</summary>
-        public virtual LightInDark.Color Color => LightInDark.Color.White;
+        /// <summary>
+        /// 职业颜色（名字/开场白/配置头着色）。**必须重写** ✓
+        ///
+        /// ⚠️ 2026-10-25 用户要求（照 NOS）：
+        ///   原来这里是 `virtual … => White` ✗ —— 漏写也能编译过，运行时**静默变成白色** ✗。
+        ///   NOS 那边颜色是**必需项**：`DefinedAssignable.Color { get; }` 在接口里**没有默认实现**
+        ///   （`NebulaAPI\Assignable\Role.cs:238`），且每个职业都在基类构造函数里给：
+        ///   `base("sheriff", new(240,191,0), RoleCategory.CrewmateRole, …)`（`Roles\Crewmate\Sheriff.cs:44`）✓
+        ///   → 我们改成 **abstract**，让编译器替我们抓住"忘了写颜色"的错 ✗→✓
+        /// </summary>
+        public abstract LightInDark.Color Color { get; }
 
-        /// <summary>阵营。</summary>
-        public virtual RoleCategory RoleCategory => RoleCategory.Crewmate;
+        /// <summary>
+        /// 阵营（决定胜负归属/分配类别）。**必须重写** ✓
+        ///
+        /// ⚠️ 2026-10-25 用户要求（照 NOS）：
+        ///   原来这里是 `virtual … => Crewmate` ✗ —— 漏写会被**静默当成船员** ✗（最危险的一种漏写）。
+        ///   NOS 的阵营同样是必需项：`DefinedCategorizedAssignable.Category { get; }` 无默认实现
+        ///   （`NebulaAPI\Assignable\Role.cs:270-276`），并在职业构造函数里必定传入 ✓
+        /// </summary>
+        public abstract RoleCategory RoleCategory { get; }
 
         /// <summary>
         /// 是否为**鬼魂职业**（对齐 Nebula 的 `GhostRole`，2026-10-06）。
@@ -78,6 +94,14 @@ namespace LightInDark.Roles
 
         /// <summary>能否击杀：覆写 true 后在 OnActivated 里调 AbilityButtonFactory.CreateKill(this)。</summary>
         public virtual bool CanKill => false;
+
+        /// <summary>
+        /// **能不能被赌怪赌杀**（默认 true ✓；2026-10-25 用户要求"给玩家留一个设置能不能被赌杀的 bool"）
+        /// <para>赌怪（Guesser）猜中时，会先问目标玩家的 <see cref="Game.Player.CanBeGuessed"/>（默认取这里的值 ✓）</para>
+        /// <para>用法：想让某个职业免疫被赌杀 → 覆写 <c>public override bool CanBeGuessed =&gt; false;</c> ✓
+        /// （玩家级临时开关用 <c>player.CanBeGuessed = false;</c>，比改职业更灵活 ✓）</para>
+        /// </summary>
+        public virtual bool CanBeGuessed => true;
 
         /// <summary>击杀冷却（秒）。</summary>
         public virtual float KillCooldown => 20f;
@@ -161,7 +185,7 @@ namespace LightInDark.Roles
         public virtual string IntroSFX => null;
 
         /// <summary>职业来源标注（如移植自某 MOD），null 不标。</summary>
-        public virtual string From => null;
+        public abstract string From { get; }
 
         // ---- 分配与能力 ----
 
@@ -193,30 +217,7 @@ namespace LightInDark.Roles
         /// </summary>
         public virtual string KillDeathCauseId => null;
 
-        /// <summary>
-        /// **这个职业的任务数量**（用户 2026-10-06 要求：职业可以覆写，而且可以**动态**）。
-        /// </summary>
-        /// ⚠️ 默认值 1 = **不干预**：保持原版按游戏选项发出来的数量 ✓
-        ///    （判定见 `RoleTaskCountPatch`：`TaskCount == 1` 时一行都不改 → 纯增量 ✓）
-        ///
-        /// 覆写示例（数量可以随配置/局内状态变 ✓）：
-        /// <code>
-        ///   // 固定 5 个
-        ///   public override int TaskCount => 5;
-        ///
-        ///   // 跟着配置项走（配置界面里能改）
-        ///   public override int TaskCount =>
-        ///       LightInDark.Configuration.ConfigRegistry.Get("role.mayor.tasks")?.GetInt() ?? 3;
-        ///
-        ///   // 跟着局内状态走
-        ///   public override int TaskCount => MyPlayer.IsDead ? 0 : 4;
-        /// </code>
-        ///
-        /// ⚠️ 落地时机是 **`ShipStatus.Begin` 发任务表的时候**（`NetworkedPlayerInfo.RpcSetTasks` 的 Prefix）——
-        ///    所以它在**每次开局**都会重新读一遍本属性 ✓（不是只读一次）
-        /// ⚠️ 变多时只能从**地图任务池里没用过的 Index** 里补 ✓（池子不够就补到够为止并打 warning ✓）
-        /// </summary>
-        public virtual int TaskCount => 1;
+        public virtual int TaskCount => -1;
 
         /// <summary>能否报告尸体（硬编码能力，不可被设置更改）。</summary>
         public virtual bool CanReport => true;
@@ -224,8 +225,19 @@ namespace LightInDark.Roles
         /// <summary>能否召开紧急会议（硬编码能力，不可被设置更改）。</summary>
         public virtual bool CanCallEmergencyMeeting => true;
 
-        /// <summary>职业专属配置项（键自动加 role.&lt;CodeName&gt;. 前缀；通用数量/概率由注册器附加）。</summary>
-        public virtual RoleConfigItem[] RoleConfiguration => Array.Empty<RoleConfigItem>();
+        /// <summary>
+        /// 职业专属配置项 —— **放配置对象本身**（照 NOS 的 <c>[KillCoolDownOption, NumOfShotsOption, …]</c>）。
+        ///
+        /// 2026-10-25 用户要求："改成类似于 NOS 的定义配置，然后用数组绑定到配置项" ✓
+        /// <code>
+        /// static readonly RoleFloatConfig KillCooldownCfg =
+        ///     RoleConfig.Float("killCooldown", 20f, 5f, 60f, 2.5f, ConfigSuffix.Second);
+        /// public override RoleConfigBase[] RoleConfiguration => [KillCooldownCfg];
+        /// public override float KillCooldown => KillCooldownCfg.Value;      // 不再写字符串键 ✓
+        /// </code>
+        /// 键自动加 <c>role.&lt;CodeName&gt;.</c> 前缀；通用「数量/概率」由 `RoleConfigRegistrar` 附加 ✓
+        /// </summary>
+        public abstract RoleConfigBase[] RoleConfiguration { get; }
 
         /// <summary>职业图标（显示在职业按钮左侧），null 只显示文字。</summary>
         public virtual UnityEngine.Sprite IconImage => null;

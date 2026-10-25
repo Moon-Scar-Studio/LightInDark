@@ -23,14 +23,33 @@ namespace LightInDark.RPCs
         [LidRPC]
         public static void RequestFreePlayRole(byte playerId, string roleCode)
         {
-            var client = AmongUsClient.Instance;
-            if (client == null || !client.AmHost || !GameModeManager.IsRoundActive
-                || !GameModeManager.AllowRoleChanges) return;
-            byte sender = CustomRPC.CurrentSender;
-            if (sender == byte.MaxValue && PlayerControl.LocalPlayer != null) sender = PlayerControl.LocalPlayer.PlayerId;
-            if (sender != playerId) return;
-            var role = RoleRegistry.GetByName(roleCode);
-            if (role != null) SetRoleByCode(playerId, role.CodeName, null);
+            try
+            {
+                var client = AmongUsClient.Instance;
+                if (client == null || !client.AmHost || !GameModeManager.IsRoundActive
+                    || !GameModeManager.AllowRoleChanges) return;
+
+                // ⚠️⚠️ 2026-10-25 修（用户："自由模式多开为什么只有房主有切换职业"）：
+                //   旧代码是 `if (sender == byte.MaxValue) sender = LocalPlayer.PlayerId;` ✗
+                //   → 房主收到**别的客户端**的请求时，若来源解析不出来（MaxValue），
+                //     就把"发送者"当成**房主自己** → `sender != playerId` → **直接 return** ✗
+                //     表现就是"只有房主自己能换职业" ✓ 完全对上用户描述。
+                //   现在：**来源未知时不猜**（只信参数）；来源已知时才校验（防冒充）✓
+                byte sender = CustomRPC.CurrentSender;
+                if (sender != byte.MaxValue && sender != playerId)
+                {
+                    LightLogger.LogWarning($"[RPC] RequestFreePlayRole 被拒绝：声称 {playerId}，实际来自 {sender}");
+                    return;
+                }
+
+                var role = RoleRegistry.GetByName(roleCode);
+                if (role != null) SetRoleByCode(playerId, role.CodeName, null);
+                LightLogger.Log($"[RPC] 自由模式换职业：玩家 {playerId} → {roleCode}（请求者={sender}）");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.RequestFreePlayRole", ex);
+            }
         }
         // ============ 角色同步 ============
 
@@ -375,25 +394,188 @@ namespace LightInDark.RPCs
 
         // ============ 会议 ============
 
+        /// <summary>
+        /// **开始会议**（强制召开 ✓）
+        /// <para>⚠️ 2026-10-25 修：原来 `reportedId` 被写成 `null`（`// TODO`）✗ → "报告尸体"永远没尸体 ✗；
+        /// 现在按 id 解析成 `NetworkedPlayerInfo` ✓</para>
+        /// </summary>
+        /// <param name="reporterId">主持人（报告者）id ✓</param>
+        /// <param name="reportedId">被报告的死者 id；`255` = 紧急会议（没有尸体 ✓）</param>
         [LidRPC]
         public static void StartMeeting(byte reporterId, byte reportedId)
         {
             try
             {
                 if (MeetingHud.Instance != null) return;
-                PlayerControl reporter = null;
-                foreach (var pc in PlayerControl.AllPlayerControls)
-                    if (pc.PlayerId == reporterId) { reporter = pc; break; }
-
+                PlayerControl reporter = FindPlayer(reporterId);
                 if (reporter == null) return;
 
-                NetworkedPlayerInfo reportedBody = reportedId == byte.MaxValue ? null : null; // TODO
+                // ★ 尸体 = 按 id 反查（255 = 没有尸体 ✓）
+                NetworkedPlayerInfo reportedBody = null;
+                if (reportedId != byte.MaxValue && GameData.Instance != null)
+                    reportedBody = GameData.Instance.GetPlayerById(reportedId);
+
+                if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+                    MeetingRoomManager.Instance.AssignSelf(reporter, reportedBody);
+
                 reporter.RpcStartMeeting(reportedBody);
-                LightLogger.Log($"[RPC] 会议开始: reporter={reporter.name}");
+                LightLogger.Log($"[RPC] 会议开始: reporter={reporter.name}, body={(reportedBody == null ? "无" : reportedBody.PlayerId.ToString())}");
             }
             catch (Exception ex)
             {
                 LightLogger.LogError("RpcDefinitions.StartMeeting", ex);
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        //  ★ 2026-10-25 补齐"原版已有、但我们没暴露"的操作
+        //    （用户："还有 Rpc，比如报告尸体的 Rpc 就没有。记得对照原版和 NOS 做"）
+        //
+        //  ⚠️ 下面这些**故意不标 `[LidRPC]`** ✗ —— 原版方法**自己就会广播** ✓：
+        //     `PlayerControl.CmdReportDeadBody`      → `RpcReportDeadBodyMessage`
+        //     `PlayerPhysics.RpcEnterVent/RpcExitVent` → `RpcEnterVentMessage/…`
+        //     `ShipStatus.RpcCloseDoorsOfType/RpcUpdateSystem` → 原版 RPC
+        //     再加 `[LidRPC]` 会**双重广播**（同一条消息发 N 次 ✗ 抽搐 / 重复报告）
+        //     → 这里只是"给常用操作一个统一入口"，同步交给原版 ✓
+        // ═════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// **报告尸体**（走原版 `CmdReportDeadBody` ✓ 自动同步 ✓）
+        /// <para>保留原版校验（游戏结束 / 会议中 / 死者不能报告 ✓）；
+        /// 要"房主强制代报"用 <see cref="UncheckedReportDeadBody"/> ✓（对照 NOS 的 Unchecked 版）</para>
+        /// </summary>
+        /// <param name="reporter">报告者（**必须活着** ✓，一般是本地玩家）</param>
+        /// <param name="target">被报告的尸体（null = 按紧急按钮 ✓）</param>
+        /// <returns>是否发出（原版校验没过 → false ✓）</returns>
+        public static bool ReportDeadBody(PlayerControl reporter, PlayerControl target = null)
+        {
+            try
+            {
+                if (reporter == null || reporter.Data == null) return false;
+                if (MeetingHud.Instance != null) return false;
+                if (reporter.Data.IsDead) return false;
+
+                reporter.CmdReportDeadBody(target == null ? null : target.Data);
+                LightLogger.Log($"[RPC] 报告: {reporter.name} → {(target == null ? "紧急按钮" : target.name)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.ReportDeadBody", ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// **房主代报告**（不检查报告者死活 ✓ 对照 NOS 的 `UncheckedCmdReportDeadBody`）
+        /// <para>用途：诱饵（Bait）这类"别人杀了你 → 你的尸体自动被报告" ✓</para>
+        /// </summary>
+        /// <param name="reporterId">报告者 id ✓</param>
+        /// <param name="targetId">尸体 id；`255` = 紧急会议 ✓</param>
+        /// <remarks>只处理**已注册过的**尸体（原版 `ReportDeadBody` 会自己找 `DeadBody` 对象 ✓）</remarks>
+        [LidRPC]
+        public static void UncheckedReportDeadBody(byte reporterId, byte targetId)
+        {
+            try
+            {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                if (MeetingHud.Instance != null) return;
+
+                PlayerControl reporter = FindPlayer(reporterId);
+                if (reporter == null) return;
+
+                NetworkedPlayerInfo body = null;
+                if (targetId != byte.MaxValue && GameData.Instance != null)
+                    body = GameData.Instance.GetPlayerById(targetId);
+
+                reporter.ReportDeadBody(body);      // 原版私有方法（interop 里可访问 ✓，NOS 也这么做 ✓）
+                LightLogger.Log($"[RPC] 强制报告: reporter={reporter.name}, body={(body == null ? "无" : targetId.ToString())}");
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.UncheckedReportDeadBody", ex);
+            }
+        }
+
+        /// <summary>**进入管道**（走原版 `PlayerPhysics.RpcEnterVent` ✓ 自动同步 ✓）</summary>
+        /// <param name="player">进管道的玩家 ✓</param>
+        /// <param name="ventId">管道 id（`Vent.Id` ✓）</param>
+        public static bool EnterVent(PlayerControl player, int ventId)
+        {
+            try
+            {
+                var phys = player == null ? null : player.MyPhysics;
+                if (phys == null) return false;
+                phys.RpcEnterVent(ventId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.EnterVent", ex);
+                return false;
+            }
+        }
+
+        /// <summary>**离开管道**（走原版 `PlayerPhysics.RpcExitVent` ✓ 自动同步 ✓）</summary>
+        /// <param name="player">出管道的玩家 ✓</param>
+        /// <param name="ventId">管道 id（`Vent.Id` ✓）</param>
+        public static bool ExitVent(PlayerControl player, int ventId)
+        {
+            try
+            {
+                var phys = player == null ? null : player.MyPhysics;
+                if (phys == null) return false;
+                phys.RpcExitVent(ventId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.ExitVent", ex);
+                return false;
+            }
+        }
+
+        /// <summary>**关掉某类门**（走原版 `ShipStatus.RpcCloseDoorsOfType` ✓ 自动同步 ✓，**房主**调用 ✓）</summary>
+        /// <param name="room">房间（`SystemTypes` ✓，如 `SystemTypes.Electrical`）</param>
+        public static bool CloseDoors(SystemTypes room)
+        {
+            try
+            {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return false;
+                if (ShipStatus.Instance == null) return false;
+
+                ShipStatus.Instance.RpcCloseDoorsOfType(room);
+                LightLogger.Log($"[RPC] 关门: {room}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.CloseDoors", ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// **通用系统更新**（走原版 `ShipStatus.RpcUpdateSystem` ✓ 自动同步 ✓，**房主**调用 ✓）
+        /// <para>用途：破坏（灯/通信/反应堆）、门、净水器…… 具体 `amount` 语义看原版各系统 ✓</para>
+        /// </summary>
+        /// <param name="system">系统类型 ✓</param>
+        /// <param name="amount">数值（各系统自定义 ✓）</param>
+        public static bool UpdateSystem(SystemTypes system, byte amount)
+        {
+            try
+            {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return false;
+                if (ShipStatus.Instance == null) return false;
+
+                ShipStatus.Instance.RpcUpdateSystem(system, amount);
+                LightLogger.Log($"[RPC] 系统更新: {system} = {amount}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("RpcDefinitions.UpdateSystem", ex);
+                return false;
             }
         }
 
@@ -426,6 +608,9 @@ namespace LightInDark.RPCs
                 var dying = FindPlayer(dyingId);
                 if (killer == null || dying == null) return;
                 if (dying.Data != null && dying.Data.IsDead) return;
+
+                // 注：**这里不再查 `CanBeGuessed`** ✓（2026-10-25 用户要求"不要赌怪猜中时检测"）
+                //    免疫的玩家在赌怪那边 `CanTarget` 里就**没建按钮** ✓ → 根本点不到 ✓
 
                 dying.Die(DeathReason.Exile, false);
 

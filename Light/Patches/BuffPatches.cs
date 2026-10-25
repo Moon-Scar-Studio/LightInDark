@@ -29,6 +29,8 @@ public static class BuffPatches
             BuffManager.Tick(Time.deltaTime);
             BuffManager.ApplyAttributes();
             BuffDebugPanel.Tick();
+            Light.UI.DebugTools.RpcTriggerPanel.Tick();          // RPC 触发器：自动关闭
+            Light.UI.DebugTools.RpcTriggerPanel.HandleInput();   // RPC 触发器：搜索框吃键
 
             if (++_frame % AnonymousCheckEvery == 0) EnsureAnonymousLooks();
         }

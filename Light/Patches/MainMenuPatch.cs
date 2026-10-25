@@ -145,6 +145,9 @@ public static class MainMenuPatch
             }
             _bgMoved = _bgInitialMoveDone;
             _bgMoveDelay = 0f;
+            // ★ 2026-10-25 诊断：整个布局（进主菜单时跑一次）到底花了多少 ms
+            //    —— 如果还卡，就用这个数判断是我们这段还是原版/别的东西 ✓
+            var layoutSw = System.Diagnostics.Stopwatch.StartNew();
             var bg = FindGO("BackgroundTexture");
             bg?.SetActive(!_bgInitialMoveDone);
 
@@ -251,11 +254,30 @@ public static class MainMenuPatch
             deco.drawMode = SpriteDrawMode.Sliced;
             deco.size = new Vector2(8f, 0.02f);
             deco.color = new Color(1f, 1f, 1f, 0.12f);
-            foreach (var obj in Resources.FindObjectsOfTypeAll<GameObject>())
-                if (obj.name is "FreePlayButton" or "HowToPlayButton")
-                    obj.transform.localPosition = new Vector3(0f, -20f, 0f);
+            // ★★ 2026-10-25 **性能修复**（用户："进主菜单太卡，大头应该是找 freeplay 直接扫整个场景"）
+            //   原来这里是 `Resources.FindObjectsOfTypeAll<GameObject>()` ✗
+            //   —— 它枚举**所有已加载对象（含资源/预制体）**，实测动辄上万次，且每次进主菜单都要跑
+            //     → **一进主菜单就卡一下** ✓（正是用户说的那个大头）
+            //   原版本来就有现成字段（AGENTS §5.1：`freePlayButton` / `howToPlayButton`）→ 直接引用，零扫描 ✓
+#if !DEBUG
+            // Release：FreePlay 的移除 + HowToPlay 的居中已由
+            //          `RemoveFreePlayAndCenterHowToPlay(__instance)` 用同一对字段完成 ✓
+            //          这里**不能再动**（挪到 -20 会把居中后的按钮藏掉 ✗）
+#else
+            // Debug：保留旧观感（两个按钮都挪到屏幕外）
+            try
+            {
+                if (__instance.freePlayButton != null)
+                    __instance.freePlayButton.transform.localPosition = new Vector3(0f, -20f, 0f);
+                if (__instance.howToPlayButton != null)
+                    __instance.howToPlayButton.transform.localPosition = new Vector3(0f, -20f, 0f);
+            }
+            catch (Exception ex) { LightLogger.LogWarning($"[MainMenuPatch] 挪 FreePlay/HowToPlay 失败：{ex.Message}"); }
+#endif
 
-            LightLogger.LogWarning("[Light.UI] === 布局完成 ===");
+            layoutSw.Stop();
+            LightLogger.LogWarning($"[Light.UI] === 布局完成 === 本次耗时 {layoutSw.ElapsedMilliseconds}ms " +
+                                   "（用于判断进主菜单卡是不是我们这段；>100ms 值得继续优化 ✓）");
 
             // 制作人员/退出
             if (btns.TryGetValue("LightButton", out var lBtn) && lBtn != null &&

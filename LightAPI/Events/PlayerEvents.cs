@@ -17,13 +17,60 @@ namespace LightInDark.Events
     }
 
     /// <summary>玩家击杀玩家时触发。</summary>
+    /// <remarks>
+    /// 2026-10-25 用户要求补参数（对照 NOS 的 `PlayerMurderedEvent`）✓：
+    ///   · <see cref="Body"/> / <see cref="DeadBodyPosition"/>：这次击杀生成的**那具尸体** ✓（自杀/无尸体杀法 → null）
+    ///   · <see cref="WithDeadBody"/> / <see cref="WithBlink"/>：有没有尸体 / 有没有原版击杀动画 ✓
+    /// </remarks>
     public class PlayerMurderEvent : BasePlayerEvent
     {
         public PlayerControl Killer => Player;
         public PlayerControl Victim { get; init; }
         public Game.PlayerState State { get; init; } = Game.PlayerState.BeKilled;
+
+        /// <summary>这次击杀**生成的尸体**（没尸体时 null ✓）</summary>
+        /// <remarks>
+        /// ⚠️ 原版尸体是在 `KillAnimation.CoPerformKill` **协程里**创建的（`KillAnimation.cs:22`），
+        ///    而击杀事件在协程**启动前**就触发了 → 当场读可能是 null ✗
+        ///    → 所以这里是**实时查找**（`DeadBodyUtil.FindByPlayer(Victim)` ✓），
+        ///      调用方晚一点读（同一帧末尾/下一帧）就能拿到 ✓
+        ///    · 放逐 / 自杀 / `Vanish` 这类无尸体杀法 → 永远 null（正常 ✓）
+        ///    · **想稳定拿尸体请用 <see cref="PlayerDeathEvent.Body"/>**（那时尸体一定已建好 ✓）
+        /// </remarks>
+        public DeadBody Body
+        {
+            get => _body != null ? _body : Game.DeadBodyUtil.FindByPlayer(Victim);
+            init => _body = value;
+        }
+
+        private readonly DeadBody _body;
+
+        /// <summary>尸体的世界坐标（没尸体时 null ✓；同样是实时查找 ✓）</summary>
+        public Vector2? DeadBodyPosition
+        {
+            get
+            {
+                if (_position.HasValue) return _position;
+                var body = Body;
+                if (body == null) return null;
+                var pos = body.transform.position;
+                return new Vector2(pos.x, pos.y);
+            }
+            init => _position = value;
+        }
+
+        private readonly Vector2? _position;
+
+        /// <summary>是否真的留了尸体 ✓（= <see cref="Body"/> 不为 null）</summary>
+        public bool WithDeadBody => Body != null;
+
+        /// <summary>是否播了**原版击杀动画**（黑屏闪光 ✓）</summary>
+        public bool WithBlink { get; init; }
+
         public PlayerMurderEvent() { }
-        public PlayerMurderEvent(PlayerControl killer, PlayerControl victim, Game.PlayerState state = Game.PlayerState.BeKilled) : base(killer) { Victim = victim; State = state; }
+        public PlayerMurderEvent(PlayerControl killer, PlayerControl victim, Game.PlayerState state = Game.PlayerState.BeKilled,
+                                 DeadBody body = null, Vector2? deadBodyPosition = null, bool withBlink = true)
+            : base(killer) { Victim = victim; State = state; _body = body; _position = deadBodyPosition; WithBlink = withBlink; }
     }
 
     /// <summary>尝试击杀时触发（可阻止）。</summary>
@@ -36,13 +83,37 @@ namespace LightInDark.Events
     }
 
     /// <summary>玩家死亡时触发。</summary>
+    /// <remarks>
+    /// 2026-10-25 用户要求补参数（"比如 PlayerDeathEvent 获取死者 body 的方式"）✓，对照 NOS 的 `PlayerDieEvent`：
+    ///   · <see cref="Body"/>：死者留下的**那具尸体** ✓
+    ///     ← 原版靠 `DeadBody.ParentId` 反查（见 `Game.DeadBodyUtil` ✓，原版没有公开的反查接口 ✗）
+    ///   · <see cref="DeadBodyPosition"/>：尸体坐标 ✓（做"指引尸体"类技能直接能用 ✓）
+    ///   · **放逐 / 自杀 / 无尸体杀法 → `Body == null`**（那不是错误 ✓）
+    ///   · <see cref="WithBlink"/>：有没有播原版击杀动画 ✓
+    /// </remarks>
     public class PlayerDeathEvent : BasePlayerEvent
     {
         public PlayerControl Killer { get; init; }
         public DeathReason Reason { get; init; }
         public Game.PlayerState State { get; init; } = Game.PlayerState.Dead;
+
+        /// <summary>死者留下的**尸体**（放逐/自杀/无尸体杀法 → null ✓）</summary>
+        public DeadBody Body { get; init; }
+
+        /// <summary>尸体的世界坐标（没尸体时 null ✓）</summary>
+        public Vector2? DeadBodyPosition { get; init; }
+
+        /// <summary>是否留了尸体 ✓（= <see cref="Body"/> 不为 null）</summary>
+        public bool WithDeadBody => Body != null;
+
+        /// <summary>是否播了**原版击杀动画** ✓</summary>
+        public bool WithBlink { get; init; }
+
         public PlayerDeathEvent() { }
-        public PlayerDeathEvent(PlayerControl player, DeathReason reason, PlayerControl killer = null, Game.PlayerState state = Game.PlayerState.Dead) : base(player) { Reason = reason; Killer = killer; State = state; }
+        public PlayerDeathEvent(PlayerControl player, DeathReason reason, PlayerControl killer = null,
+                                Game.PlayerState state = Game.PlayerState.Dead,
+                                DeadBody body = null, Vector2? deadBodyPosition = null, bool withBlink = true)
+            : base(player) { Reason = reason; Killer = killer; State = state; Body = body; DeadBodyPosition = deadBodyPosition; WithBlink = withBlink; }
     }
 
     /// <summary>玩家复活时触发。</summary>

@@ -25,12 +25,15 @@ public abstract class GuesserRole : RoleTemplate
         ? UnityEngine.Color.red
         : UnityEngine.Color.yellow;
 
-    public override RoleConfigItem[] RoleConfiguration => new[]
-    {
-        new RoleConfigItem { Key = "shots", Type = ConfigType.Int, Default = 2, Min = 1, Max = 15, Step = 1 },
-        new RoleConfigItem { Key = "safeGuesses", Type = ConfigType.Int, Default = 0, Min = 0, Max = 10, Step = 1 },
-        new RoleConfigItem { Key = "multipleShotsPerMeeting", Type = ConfigType.Bool, Default = false },
-    };
+    // ── 职业专属配置（照 NOS：配置对象本身就是配置项，`.Value` 直接取值 ✓）──
+    // ⚠️ 用**实例字段**而不是 static：NiceGuesser / EvilGuesser 是两个不同的职业实例，
+    //    各自需要各自的注册绑定（static 会让第二个职业复用第一个的 ConfigItem → 键/前缀错位 ✗）
+    public readonly RoleIntConfig ShotsCfg = RoleConfig.Int("shots", 2, 1, 15);
+    public readonly RoleIntConfig SafeGuessesCfg = RoleConfig.Int("safeGuesses", 0, 0, 10);
+    public readonly RoleBoolConfig MultiShotCfg = RoleConfig.Bool("multipleShotsPerMeeting", false);
+
+    /// <summary>数组绑定 ✓（键自动补 `role.&lt;CodeName&gt;.` 前缀）</summary>
+    public override RoleConfigBase[] RoleConfiguration => [ShotsCfg, SafeGuessesCfg, MultiShotCfg];
 
     public override RuntimeRoleTemplate CreateRuntime(PlayerControl owner) => new GuesserRuntime(owner, this);
 }
@@ -52,9 +55,9 @@ internal sealed class GuesserRuntime : RuntimeRoleTemplate
 
         // （不再需要 NormalizeVanillaRole ✓ —— 分配机已被完全接管，见 RuntimeRoleTemplate ✓）
 
-        _shots = ConfigRegistry.GetInt($"role.{CodeName}.shots");
-        _safe = ConfigRegistry.GetInt($"role.{CodeName}.safeGuesses");
-        _multi = ConfigRegistry.GetBool($"role.{CodeName}.multipleShotsPerMeeting");
+        _shots = (Role as GuesserRole)?.ShotsCfg.Value ?? 2;            // ★ 配置对象取值 ✓
+        _safe = (Role as GuesserRole)?.SafeGuessesCfg.Value ?? 0;
+        _multi = (Role as GuesserRole)?.MultiShotCfg.Value ?? false;
 
         var config = new MeetingTargetButtonConfig
         {
@@ -78,11 +81,24 @@ internal sealed class GuesserRuntime : RuntimeRoleTemplate
 
     protected override void OnMeetingEnded(MeetingEndEvent e) => Close();
 
+    /// <summary>
+    /// 这个玩家**要不要给赌怪建按钮**（false = 连按钮都没有 ✓）
+    /// <para>⚠️ 2026-10-25 用户要求："不要赌怪猜中时检测 CanBeGuessed，就这个为 false 时按钮都不创建" ✓</para>
+    /// <para>对照 NOS（`Nebula\Roles\ComplexRoles\Guesser.cs:172`）：
+    /// NOS 也是**建 UI 时**就 `if (!role.IsGuessableRole) continue;` —— **不给它建按钮** ✓，
+    /// 而不是"点了再判"✗。我们的"赌杀免疫"是**玩家级**（`Player.CanBeGuessed`），所以过滤放在这里 ✓</para>
+    /// </summary>
     private bool CanTarget(PlayerControl p)
     {
         var me = MyPlayer?.Control;
-        return p != null && me != null && p.PlayerId != me.PlayerId
-            && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
+        if (p == null || me == null || p.PlayerId == me.PlayerId) return false;
+        if (p.Data == null || p.Data.IsDead || p.Data.Disconnected) return false;
+
+        // ★ 不能被赌杀的玩家 → **不建按钮**（不是"建了再拒绝" ✗）
+        var target = LightInDark.Game.Player.Get(p.PlayerId);
+        if (target != null && !target.CanBeGuessed) return false;
+
+        return true;
     }
 
     private bool CanGuess()
@@ -133,6 +149,8 @@ internal sealed class GuesserRuntime : RuntimeRoleTemplate
 
         if (string.Equals(actual, guessed.CodeName, StringComparison.OrdinalIgnoreCase))
         {
+            // ⚠️ 2026-10-25 用户要求：**这里不再检测 `CanBeGuessed`** ✗
+            //   免疫的玩家在 `CanTarget` 里就**根本不会建按钮** ✓（点击入口都不存在 ✓）
             _shots--;
             _used = true;
             Light.Utilities.ToneSfx.PlayGunfire();

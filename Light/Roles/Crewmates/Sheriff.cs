@@ -16,15 +16,22 @@ public class Sheriff : RoleTemplate
     public override string CodeName => Code;
     public override LightInDark.Color Color => LightInDark.Color.Yellow;
     public override RoleCategory RoleCategory => RoleCategory.Crewmate;
-    public override bool CanKill => true;
-    public override float KillCooldown => ConfigRegistry.GetFloat($"role.{Code}.killCooldown");
-    public override AllocationParameters Allocation => new() { MaxCount = 1, Chance = 30 };
+    // ⚠️ TODO（2026-10-25）：RoleTemplate 里 From 已改成 abstract，
+    //    这里先用**改造前的默认值**；需要真实"职业来源"时替换成实际值 ✓
+    public override string From => null;
 
-    public override RoleConfigItem[] RoleConfiguration => new[]
-    {
-        new RoleConfigItem { Key = "killCooldown", Type = ConfigType.Float, Default = 20f, Min = 5f, Max = 60f, Step = 2.5f, Suffix = ConfigSuffix.Second },
-        new RoleConfigItem { Key = "kills", Type = ConfigType.Int, Default = 3, Min = 1, Max = 15, Step = 1 },
-    };
+    // ── 职业专属配置（照 NOS：配置对象本身就是配置项，用 `.Value` 取值 ✓）──
+    static readonly RoleFloatConfig KillCooldownCfg =
+        RoleConfig.Float("killCooldown", 20f, 5f, 60f, 2.5f, ConfigSuffix.Second);   // 秒 ✓
+    static readonly RoleIntConfig KillsCfg =
+        RoleConfig.Int("kills", 3, 1, 15);
+
+    /// <summary>数组绑定 ✓（键自动补 `role.Sheriff.` 前缀）</summary>
+    public override RoleConfigBase[] RoleConfiguration => [KillCooldownCfg, KillsCfg];
+
+    public override bool CanKill => true;
+    public override float KillCooldown => KillCooldownCfg.Value;      // ★ 不再写字符串键 ✓
+    public override AllocationParameters Allocation => new() { MaxCount = 1, Chance = 30 };
 
     public override RuntimeRoleTemplate CreateRuntime(PlayerControl owner) => new RuntimeInstance(owner, this);
 
@@ -42,21 +49,25 @@ public class Sheriff : RoleTemplate
 
             // （不再需要 NormalizeVanillaRole ✓ —— 分配机已被完全接管，见 RuntimeRoleTemplate ✓）
 
-            _killsLeft = ConfigRegistry.GetInt($"role.{CodeName}.kills");
+            _killsLeft = KillsCfg.Value;   // ★ 配置对象直接取值 ✓（不再写字符串键）
             _tracker = new PlayerTracker(MyPlayer, RoleUtils.KillDistance(), p => !p.IsDead);
             RoleButtonManager.RegisterTracker(_tracker);
 
-            _button = AbilityButtonFactory.Create(this, new RoleButtonConfig
-            {
-                IsKillButton = true,
-                ArrangedAsKillButton = true,
-                LabelType = ButtonLabelType.Impostor,
-                Hotkey = KeyCode.Q,
-                Label = "击杀",
-                Cooldown = Role.KillCooldown,
-                CanShow = () => _killsLeft > 0,
-                CanUse = () => _killsLeft > 0 && _tracker?.CurrentTarget != null && PlayerControl.LocalPlayer.CanMove,
-            }, TryKill);
+            // ★ 2026-10-25 新写法（照 NOS 的命名可选参数）：IDE 里敲 `Create(` 就能看到全部可填项 ✓
+            //   不再需要打开 `RoleButtonConfig.cs` 才知道能填什么 ✓
+            _button = AbilityButtonFactory.Create(this,
+                label: "击杀",                 // 必选 ①（文本，或 label: "" + labelKey: "…"）
+                icon: null,                     // 必选 ②（null = 用模板原图标 ✓）
+                cooldown: Role.KillCooldown,    // 必选 ③
+                hotkey: KeyCode.Q,              // 必选 ④
+                onClick: TryKill,               // 必选 ⑤
+                // ↓ 可选
+                isKillButton: true,
+                arrangedAsKillButton: true,
+                labelType: ButtonLabelType.Impostor,
+                canShow: () => _killsLeft > 0,
+                canUse: () => _killsLeft > 0 && _tracker != null && _tracker.CurrentTarget != null
+                                && PlayerControl.LocalPlayer.CanMove);
 
             RefreshUses();
         }

@@ -19,8 +19,17 @@ namespace LightInDark.Modifiers.Buffs
         private static readonly Dictionary<byte, Vector3> _baseScale = new();
         private static readonly Dictionary<byte, float> _baseSpeed = new();
 
-        /// <summary>本地添加Buff（同 Key 刷新时长）。</summary>
-        public static RuntimeBuff Add(Player player, BuffDefinition definition, float? duration = null)
+        /// <summary>本地添加Buff（同 (类型 + 实例键) 刷新时长）。</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="definition">Buff 类型（首次使用会自动登记进 `BuffRegistry` 供 RPC 反查 ✓）</param>
+        /// <param name="duration">时长（秒）；null = 用定义里的默认时长 ✓</param>
+        /// <param name="instanceKey">
+        /// **实例键**（2026-10-25 用户要求）：
+        ///   · 空 = 同类型只留一个（旧行为 ✓）
+        ///   · 非空 = 同类型可并存多个 ✓，移除时可精确到这一个 ✓
+        /// </param>
+        public static RuntimeBuff Add(Player player, BuffDefinition definition, float? duration = null,
+                                      string instanceKey = null)
         {
             try
             {
@@ -29,6 +38,7 @@ namespace LightInDark.Modifiers.Buffs
                 // 参数化定义（SpeedBuff 等）首次使用时登记，供 RPC 按 key 反查
                 if (BuffRegistry.Get(definition.Key) == null) BuffRegistry.Register(definition);
 
+                string key = instanceKey ?? "";
                 byte id = player.Control.PlayerId;
                 if (!_byPlayer.TryGetValue(id, out var list))
                 {
@@ -36,24 +46,26 @@ namespace LightInDark.Modifiers.Buffs
                     _byPlayer[id] = list;
                 }
 
-                var existing = list.FirstOrDefault(b => b.Definition.Key == definition.Key);
+                // 去重键 = (类型 key + 实例 key) ✓ —— 同类型不同来源可以并存 ✓
+                var existing = list.FirstOrDefault(b => b.Definition.Key == definition.Key && b.InstanceKey == key);
                 if (existing != null)
                 {
                     existing.Duration = duration ?? definition.DefaultDuration;
                     existing.Remaining = existing.Duration;
-                    LightLogger.Log($"[Buff] {player.Name} 刷新 {definition.Key} → {existing.Duration:0.#}s");
+                    LightLogger.Log($"[Buff] {player.Name} 刷新 {definition.Key}{(key.Length > 0 ? "#" + key : "")} → {existing.Duration:0.#}s");
                     return existing;
                 }
 
                 var buff = definition.CreateInstance(player);
                 if (buff == null) return null;
 
+                buff.InstanceKey = key;
                 buff.Duration = duration ?? definition.DefaultDuration;
                 buff.Remaining = buff.Duration;
                 list.Add(buff);
                 buff.Apply();
 
-                LightLogger.Log($"[Buff] {player.Name} +{definition.Key}（{(buff.IsPermanent ? "整局" : $"{buff.Duration:0.#}s")}）");
+                LightLogger.Log($"[Buff] {player.Name} +{definition.Key}{(key.Length > 0 ? "#" + key : "")}（{(buff.IsPermanent ? "整局" : $"{buff.Duration:0.#}s")}）");
                 return buff;
             }
             catch (Exception ex)
@@ -63,25 +75,22 @@ namespace LightInDark.Modifiers.Buffs
             }
         }
 
-        /// <summary>房主调用：本地生效并广播到其他客户端。</summary>
-        public static RuntimeBuff AddAndBroadcast(Player player, BuffDefinition definition, float? duration = null)
-        {
-            var buff = Add(player, definition, duration);
-            if (buff == null) return null;
+        /// <summary>房主调用：本地生效 + 定向同步给符合条件的客户端 ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="definition">Buff 类型（要注册过 ✓）</param>
+        /// <param name="duration">时长（秒）；null = 用定义里的默认时长 ✓</param>
+        /// <param name="instanceKey">实例键（同类型可并存 ✓）</param>
+        /// <param name="canReceive">哪些客户端需要收到这条同步（null = 除自己外全部 ✓）</param>
+        public static RuntimeBuff AddAndBroadcast(Player player, BuffDefinition definition, float? duration = null,
+                                                  string instanceKey = null, Func<Player, bool> canReceive = null)
+            => BuffSync.Give(player, definition, duration ?? definition.DefaultDuration, instanceKey, canReceive);
 
-            try
-            {
-                if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
-                    RpcDefinitions.SyncBuff(player.Control.PlayerId, definition.Key, buff.Duration);
-            }
-            catch (Exception ex)
-            {
-                LightLogger.LogWarning($"[Buff] 广播 {definition.Key} 失败: {ex.Message}");
-            }
-
-            return buff;
-        }
-
+        /// <summary>
+        /// 按 **实例键** 或 **类型键** 移除一个（兼容旧调用 ✓）。
+        /// 优先级：先找实例键（精确 ✓），找不到再按类型键（旧行为 ✓）
+        /// </summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="key">**实例键**（优先 ✓）或**类型键**（兜底 ✓）；空 → 返回 false ✓</param>
         public static bool Remove(Player player, string key)
         {
             try
@@ -89,12 +98,13 @@ namespace LightInDark.Modifiers.Buffs
                 if (player == null || player.Control == null || string.IsNullOrEmpty(key)) return false;
                 if (!_byPlayer.TryGetValue(player.Control.PlayerId, out var list)) return false;
 
-                var target = list.FirstOrDefault(b => b.Definition.Key == key);
+                var target = list.FirstOrDefault(b => b.InstanceKey == key)      // ✓ 精确（推荐）
+                          ?? list.FirstOrDefault(b => b.Definition.Key == key);   // ✓ 兼容旧行为
                 if (target == null) return false;
 
                 list.Remove(target);
                 target.Expire();
-                LightLogger.Log($"[Buff] {player.Name} -{key}");
+                LightLogger.Log($"[Buff] {player.Name} -{target.Definition.Key}{(target.InstanceKey.Length > 0 ? "#" + target.InstanceKey : "")}");
                 return true;
             }
             catch (Exception ex)
@@ -104,6 +114,59 @@ namespace LightInDark.Modifiers.Buffs
             }
         }
 
+        /// <summary>**按类型**移除该玩家身上这种 Buff 的全部实例 ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="definition">要移除的类型（null = 什么都不做 ✓）</param>
+        public static int RemoveByType(Player player, BuffDefinition definition)
+            => RemoveWhere(player, b => definition != null && b.Definition.Key == definition.Key);
+
+        /// <summary>**按实例键**移除（推荐用法 ✓：能精确到某一次施加）</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="instanceKey">实例键（`Add` 时传的那个 `key` ✓）；空 → 返回 0 ✓</param>
+        public static int RemoveByKey(Player player, string instanceKey)
+            => string.IsNullOrEmpty(instanceKey) ? 0 : RemoveWhere(player, b => b.InstanceKey == instanceKey);
+
+        /// <summary>按谓词移除，返回移除个数 ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="predicate">返回 true 的 Buff 会被移除 ✓</param>
+        public static int RemoveWhere(Player player, Func<RuntimeBuff, bool> predicate)
+        {
+            try
+            {
+                if (player == null || player.Control == null || predicate == null) return 0;
+                if (!_byPlayer.TryGetValue(player.Control.PlayerId, out var list)) return 0;
+
+                var doomed = list.Where(predicate).ToList();
+                foreach (var buff in doomed)
+                {
+                    list.Remove(buff);
+                    buff.Expire();
+                    LightLogger.Log($"[Buff] {player.Name} -{buff.Definition.Key}{(buff.InstanceKey.Length > 0 ? "#" + buff.InstanceKey : "")}");
+                }
+                if (list.Count == 0) _byPlayer.Remove(player.Control.PlayerId);
+                return doomed.Count;
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogError("BuffManager.RemoveWhere", ex);
+                return 0;
+            }
+        }
+
+        /// <summary>是否带有该实例键的 Buff ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="instanceKey">实例键 ✓</param>
+        public static bool HasKey(Player player, string instanceKey)
+            => !string.IsNullOrEmpty(instanceKey) && Get(player).Any(b => b.InstanceKey == instanceKey);
+
+        /// <summary>按实例键取（找不到 null）✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="instanceKey">实例键 ✓</param>
+        public static RuntimeBuff GetByKey(Player player, string instanceKey)
+            => string.IsNullOrEmpty(instanceKey) ? null : Get(player).FirstOrDefault(b => b.InstanceKey == instanceKey);
+
+        /// <summary>清空该玩家身上全部 Buff ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
         public static void RemoveAll(Player player)
         {
             try
@@ -121,6 +184,8 @@ namespace LightInDark.Modifiers.Buffs
             }
         }
 
+        /// <summary>该玩家身上当前的 Buff（只读 ✓）</summary>
+        /// <param name="player">目标玩家 ✓</param>
         public static IReadOnlyList<RuntimeBuff> Get(Player player)
         {
             if (player == null || player.Control == null) return Array.Empty<RuntimeBuff>();
@@ -129,10 +194,14 @@ namespace LightInDark.Modifiers.Buffs
                 : Array.Empty<RuntimeBuff>();
         }
 
+        /// <summary>是否带有该**类型键**的 Buff ✓</summary>
+        /// <param name="player">目标玩家 ✓</param>
+        /// <param name="key">类型键（`BuffDefinition.Key` ✓）</param>
         public static bool Has(Player player, string key)
             => !string.IsNullOrEmpty(key) && Get(player).Any(b => b.Definition.Key == key);
 
         /// <summary>每帧计时：到期或控件失效的 Buff 自动移除。</summary>
+        /// <param name="dt">本帧流逝的秒数（`Time.deltaTime` ✓）</param>
         public static void Tick(float dt)
         {
             if (_byPlayer.Count == 0) return;
@@ -198,6 +267,7 @@ namespace LightInDark.Modifiers.Buffs
         }
 
         /// <summary>速度倍率（由 <c>PlayerPhysics.FixedUpdate</c> 后置调用）。</summary>
+        /// <param name="control">要应用速度倍率的玩家控件 ✓</param>
         public static void ApplySpeed(PlayerControl control)
         {
             try

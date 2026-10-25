@@ -64,6 +64,10 @@ namespace LightInDark.Events
     public class PlayerVentEnterEvent : BasePlayerEvent
     {
         public Vent Vent { get; init; }
+
+        /// <summary>管道 id（= `Vent.Id` ✓；拿不到管道对象时为 -1 ✓，2026-10-25 补）</summary>
+        public int VentId => Vent == null ? -1 : Vent.Id;
+
         public PlayerVentEnterEvent() { }
         public PlayerVentEnterEvent(PlayerControl player, Vent vent) : base(player) { Vent = vent; }
     }
@@ -72,6 +76,10 @@ namespace LightInDark.Events
     public class PlayerVentExitEvent : BasePlayerEvent
     {
         public Vent Vent { get; set; }
+
+        /// <summary>管道 id（= `Vent.Id` ✓；拿不到管道对象时为 -1 ✓，2026-10-25 补）</summary>
+        public int VentId => Vent == null ? -1 : Vent.Id;
+
         public PlayerVentExitEvent() { }
         public PlayerVentExitEvent(PlayerControl player, Vent vent) : base(player) { Vent = vent; }
     }

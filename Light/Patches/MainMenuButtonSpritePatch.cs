@@ -101,8 +101,21 @@ public static class MainMenuButtonSpritePatch
     {
         try
         {
-            // ① 正确目标：名字就是 "Enter Code Button" 的那张卡片
-            foreach (var pb in UnityEngine.Object.FindObjectsOfType<PassiveButton>(true))
+            // ★ 2026-10-25 性能修复：原来这里是 `FindObjectsOfType<PassiveButton>(true)` ✗
+            //    —— 全场景枚举（含未激活对象），每次进主菜单跑一遍 → 卡一下 ✓
+            //    按 AGENTS §5.1 记录的路径**限定在 Online Buttons 子树里找** ✓
+            //    （`OnlineButtons/AspectSize/Scaler/{Create Lobby Button, Find Game Button, Enter Code Button, Line}`）
+            Transform? onlineRoot = null;
+            try
+            {
+                var ui = m.mainMenuUI;
+                if (ui != null)
+                    onlineRoot = ui.transform.FindChild("AspectScaler")?.FindChild("Online Buttons");
+            }
+            catch { }
+            if (onlineRoot == null) onlineRoot = m.transform;      // 兜底：至少限定在主界面内 ✓
+
+            foreach (var pb in onlineRoot.GetComponentsInChildren<PassiveButton>(true))
             {
                 if (pb == null) continue;
                 if (pb.gameObject.name == "Enter Code Button") return pb;

@@ -117,8 +117,12 @@ internal static class RoleConfigRegistrar
         }
     }
 
-    /// <summary>把轻量配置项展开为 ConfigBlock 配置（键自动加 role.&lt;CodeName&gt;. 前缀）。</summary>
-    private static void AddItem(ConfigBlock block, RoleTemplate role, RoleConfigItem item, ConfigItem countItem)
+    /// <summary>
+    /// 把**配置对象**注册进 ConfigBlock（键自动加 role.&lt;CodeName&gt;. 前缀）。
+    /// 2026-10-25 起的形状：`RoleConfiguration` 里放的就是 `RoleConfigBase` 对象本身，
+    /// 注册完对象自带 `.Value`（见 `LightAPI\Configuration\RoleConfig.cs`）✓
+    /// </summary>
+    private static void AddItem(ConfigBlock block, RoleTemplate role, RoleConfigBase item, ConfigItem countItem)
     {
         try
         {
@@ -135,17 +139,9 @@ internal static class RoleConfigRegistrar
                 return;
             }
 
-            string key = item.FullKey(role);
-            string label = item.ResolveLabel(role);
-            ConfigItem added = item.Type switch
-            {
-                ConfigType.Bool => block.AddConfiguration(key, item.Default is bool b && b, label, item.Detail),
-                ConfigType.Float => block.AddConfiguration(key, ToFloat(item.Default), item.Min, item.Max, item.Step, label, item.Detail),
-                ConfigType.Value => block.AddConfiguration(key, item.Default as string[] ?? Array.Empty<string>(), label, item.Detail),
-                _ => block.AddConfiguration(key, ToInt(item.Default), (int)item.Min, (int)item.Max, (int)item.Step, label, item.Detail),
-            };
-            if (countItem != null) added.SetDependsOn(countItem);   // 数量=0（职业关闭）时自动隐藏
-            if (item.Suffix != ConfigSuffix.None) added.WithSuffix(item.Suffix);
+            // ⚠️ 旧的 `ToInt/ToFloat` + switch 展开已经不需要了：
+            //   每个 RoleConfigBase 自己知道怎么建项（`Create`），这里只负责"补前缀 + 绑定"✓
+            item.Register(role, block, countItem);
         }
         catch (Exception ex)
         {

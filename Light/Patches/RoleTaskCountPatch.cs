@@ -36,16 +36,17 @@ namespace Light.Patches;
 ///   证据：`ShipStatus.cs:217` 用 `t.Index == (int)idx` 反查任务 →
 ///   所以"加任务"必须从 `ShipStatus` 的任务池里取 **Index** ✓ 不能编造 TaskType ✗
 ///
-/// ⚠️ **纯增量**：角色没有覆写（`TaskCount` 保持默认 1）时，本补丁**一行都不改** ✓
+/// ⚠️ **纯增量**：角色没有覆写（`TaskCount` 保持默认 **-1**）时，本补丁**一行都不改** ✓
 ///    想用的话在职业里写：<c>public override int TaskCount => ConfigRegistry.Get("role.x.tasks")?.GetInt() ?? 3;</c>
+///
+/// ⚠️ 2026-10-25 用户要求：哨兵值从 `1` 改成 **负数**（默认 `-1`）——
+///    原来 `1` 既是"不干预"又可能是"真的想要 1 个任务"，两者冲突 ✗
+///    → 现在 **`< 0` = 不干预**；`0` / 正数 = 真实数量（`0` 也算合法：一个任务都不给 ✓）
 /// ═══════════════════════════════════════════════════════════════════════
 /// </summary>
 [HarmonyPatch(typeof(NetworkedPlayerInfo), nameof(NetworkedPlayerInfo.RpcSetTasks))]
 public static class RoleTaskCountPatch
 {
-    /// <summary>`TaskCount` 的默认值（= 原版按选项发出来的数量 → 不干预）。</summary>
-    private const int DefaultTaskCount = 1;
-
     public static void Prefix(NetworkedPlayerInfo __instance, ref byte[] taskTypeIds)
     {
         try
@@ -61,8 +62,7 @@ public static class RoleTaskCountPatch
             if (template == null) return;
 
             int want = template.TaskCount;                          // ★ 职业覆写的数量（可以动态求值）
-            if (want == DefaultTaskCount) return;                   // 没覆写 → 完全不干预 ✓
-            if (want < 0) want = 0;
+            if (want < 0) return;                                   // ★ 负数 = 交给原版，完全不干预 ✓
 
             if (want < taskTypeIds.Length)
             {

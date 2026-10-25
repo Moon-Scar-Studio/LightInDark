@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using HarmonyLib;
 using InnerNet;
@@ -100,6 +100,11 @@ public static class GameEndPatch
             //   更彻底的那一半（Player.Release + 事件注销）由 GameManager.Initialize() 幂等化后负责：
             //   它会 Release 掉已销毁的旧实体 ✓
             CleanupRolesAtGameEnd();
+
+            // ★ 2026-10-25：把外观覆盖栈清空（小黑人 / 隐蔽者）——
+            //   否则上一局的外观层会残留到下一局 ✗（外观栈是静态的，不随换局自动清）
+            try { LightInDark.Visual.PlayerAppearance.ClearAll(); }
+            catch (Exception ex) { LightLogger.LogWarning($"[GameEndPatch] 清理外观失败: {ex.Message}"); }
             LightInDark.Game.EndGameManager.OnGameEnded();
             GameModeManager.EndRound();
 

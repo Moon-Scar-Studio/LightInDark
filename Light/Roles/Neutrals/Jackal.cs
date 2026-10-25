@@ -34,25 +34,32 @@ public class Jackal : RoleTemplate
     public override string CodeName => Code;
     public override LightInDark.Color Color => new(0f, 162f / 255f, 211f / 255f, 1f);
     public override RoleCategory RoleCategory => RoleCategory.Neutral;
+    // ⚠️ TODO（2026-10-25）：RoleTemplate 里 From / RoleConfiguration 已改成 abstract，
+    //    这里先用**改造前的默认值**把构建恢复；需要真实"职业来源"时替换成实际值 ✓
+    public override string From => null;
     public override NeutralType NeutralType => NeutralType.Evil;
     public override string TeamCode => Code;
     public override bool CanKill => true;
     public override bool CanUseVents => true;
-    public override float KillCooldown => ConfigRegistry.GetFloat($"role.{Code}.killCooldown");
+    // ── 职业专属配置（照 NOS：配置对象本身就是配置项，`.Value` 直接取值 ✓）──
+    static readonly RoleFloatConfig KillCooldownCfg =
+        RoleConfig.Float("killCooldown", 20f, 5f, 60f, 2.5f, ConfigSuffix.Second);
+    static readonly RoleBoolConfig CanCreateSidekickCfg = RoleConfig.Bool("canCreateSidekick", true);
+    // ★ 2026-10-25：「能不能招跟班」关掉时，这个数量项**自动隐藏** ✓（正是用户要的"配置显隐 Action"）
+    static readonly RoleIntConfig MaxSidekicksCfg =
+        RoleConfig.Int("maxSidekicks", 1, 0, 3).SetVisibleWhen(() => CanCreateSidekickCfg.Value);
+
+    public override float KillCooldown => KillCooldownCfg.Value;
     public override AllocationParameters Allocation => new() { MaxCount = 1, Chance = 30 };
 
     /// <summary>击杀时用自定义死因 ✓（复盘里会显示"被豺狼击杀"而不是笼统的"被击杀" ✓）</summary>
     public override string KillDeathCauseId => KillCauseId;
 
-    public static bool CanCreateSidekick => ConfigRegistry.GetBool($"role.{Code}.canCreateSidekick");
-    public static int MaxSidekicks => ConfigRegistry.GetInt($"role.{Code}.maxSidekicks");
+    public static bool CanCreateSidekick => CanCreateSidekickCfg.Value;
+    public static int MaxSidekicks => MaxSidekicksCfg.Value;
 
-    public override RoleConfigItem[] RoleConfiguration => new[]
-    {
-        new RoleConfigItem { Key = "killCooldown", Type = ConfigType.Float, Default = 20f, Min = 5f, Max = 60f, Step = 2.5f, Suffix = ConfigSuffix.Second },
-        new RoleConfigItem { Key = "canCreateSidekick", Type = ConfigType.Bool, Default = true },
-        new RoleConfigItem { Key = "maxSidekicks", Type = ConfigType.Int, Default = 1, Min = 0, Max = 3, Step = 1 },
-    };
+        /// <summary>数组绑定 ✓（键自动补 `role.Jackal.` 前缀）</summary>
+    public override RoleConfigBase[] RoleConfiguration => [KillCooldownCfg, CanCreateSidekickCfg, MaxSidekicksCfg];
 
     public override RuntimeRoleTemplate CreateRuntime(PlayerControl owner)
         => new RuntimeInstance(owner, this);

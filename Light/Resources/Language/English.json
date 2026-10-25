@@ -152,7 +152,6 @@
   "notifier.disconnectmsg.ban": "<color=#D32F2F>was banned from the game</color>",
   "notifier.disconnectmsg.kick": "<color=#FF9800>was kicked from the game</color>",
   "notifier.disconnectmsg.disconnect": "<color=#FFC107>disconnected from the server</color>",
-
   "buff.speed_boost.name": "Speed Boost",
   "buff.speed_boost.describe": "Move 30% faster for 10 seconds; ends when a meeting starts.",
   "buff.shadow.name": "Anonymous",

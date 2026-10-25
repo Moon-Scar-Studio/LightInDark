@@ -18,6 +18,10 @@ public class Caller : RoleTemplate
     public override string CodeName => Code;
     public override LightInDark.Color Color => LightInDark.Color.Yellow;
     public override RoleCategory RoleCategory => RoleCategory.Crewmate;
+    // ⚠️ TODO（2026-10-25）：RoleTemplate 里 From / RoleConfiguration 已改成 abstract，
+    //    这里先用**改造前的默认值**把构建恢复；需要真实"职业来源"时替换成实际值 ✓
+    public override string From => null;
+    public override RoleConfigBase[] RoleConfiguration => Array.Empty<RoleConfigBase>();
 
     /// <summary>开场音效（相对路径 mp3，YouAreText 出现时播放）。</summary>
     public override string IntroSFX => "./Resources/SFX/CallerIntro.mp3";
@@ -59,11 +63,13 @@ public class Caller : RoleTemplate
                     () => RpcDefinitions.RpcStartMeeting());
 
                 // 持续按钮：点一下开启效果，再点一下取消
+                // ★ 2026-10-25：`effectDuration` 现在是**必选**（照 NOS）→ 示例效果给 5s ✓
                 AbilityButtonFactory.CreateEffect(this, new RoleButtonConfig()
                     .SetLabel("驱散")
                     .SetCooldown(5f)
                     .SetOnClickSFX("./Resources/SFX/CallerUse.mp3"),
-                    () => LightLogger.Log("[Caller] 效果触发(示例)"));
+                    () => LightLogger.Log("[Caller] 效果触发(示例)"),
+                    5f);   // ← 效果时长（秒）；0 = 持续到手动取消 ✓
                 
             }
             catch (Exception ex)

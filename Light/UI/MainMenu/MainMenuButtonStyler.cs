@@ -168,9 +168,15 @@ internal static class MainMenuButtonStyler
             Add(menu.creditsButton, false);
             Add(menu.quitButton, false);
 
+            // ★ 2026-10-25 性能修复：原来这两处用的是
+            //   `FindObjectsOfType<PassiveButton>()` ✗ —— **全场景枚举**（每次进主菜单 2 遍）→ 卡一下 ✓
+            //   语义上本来就只要"主界面层级里的按钮"（下面还会 `IsChildOf(menu.transform)` 过滤），
+            //   → 直接用 `menu.GetComponentsInChildren<PassiveButton>(true)` **限定子树** ✓（一遍搞定 ✓）
+            var allButtons = menu.GetComponentsInChildren<PassiveButton>(true);
+
             // ② LIGHT 按钮 + 底部那些（检查更新/模组官网/GITHUB/QQ群）—— 自动扫，
             //    它们可能挂在不同父节点下，硬编码容易漏。
-            foreach (var pb in UnityEngine.Object.FindObjectsOfType<PassiveButton>())
+            foreach (var pb in allButtons)
             {
                 if (pb == null) continue;
                 var go = pb.gameObject;
@@ -184,7 +190,7 @@ internal static class MainMenuButtonStyler
 
             // ③ 右侧面板
             Add(menu.createGameButton, true);
-            foreach (var pb in UnityEngine.Object.FindObjectsOfType<PassiveButton>())
+            foreach (var pb in allButtons)
             {
                 if (pb == null) continue;
                 var go = pb.gameObject;

@@ -13,6 +13,15 @@ namespace LightInDark.Modifiers.Buffs
         public BuffDefinition Definition { get; }
         public Player MyPlayer { get; }
 
+        /// <summary>
+        /// **实例键**（同一种 Buff 可按不同来源并存，也是移除时的**推荐**选择器 ✓）。
+        ///
+        /// ⚠️ 2026-10-25 用户要求：`GiveBuff(buff, duration, key)` 的第三个参数就是这个 ✓
+        ///   · 空 = 没给 key → 同类型只留一个（旧行为 ✓）
+        ///   · 非空 → (类型 + key) 组成唯一键 ✓，同类型可以并存多个 ✓
+        /// </summary>
+        public string InstanceKey { get; internal set; } = "";
+
         /// <summary>本实例的总时长（&lt; 0 = 整局）。</summary>
         public float Duration { get; internal set; }
 

@@ -41,9 +41,51 @@ namespace LightInDark.Events
 
         // ── 玩家生死 ──
         public static void OnPlayerSuicide(PlayerControl player, string reason, PlayerState state, bool needLog = true) => EventSystem.RunEvent(new PlayerSuicideEvent { Player = player, Reason = reason, NeedLog = needLog, State = state });
-        public static void OnPlayerMurder(PlayerControl killer, PlayerControl victim, PlayerState state) => EventSystem.RunEvent(new PlayerMurderEvent { Player = killer, Victim = victim, State = state });
+
+        /// <summary>击杀事件：**顺带把尸体对象解析出来** ✓（原版 `DeadBody.ParentId` 反查，见 `DeadBodyUtil`）</summary>
+        /// <param name="killer">凶手 ✓</param>
+        /// <param name="victim">死者 ✓</param>
+        /// <param name="state">死因状态 ✓</param>
+        /// <param name="withBlink">
+        /// 有没有原版击杀动画；**不传 = 按"有没有尸体"自动判断** ✓
+        /// （⚠️ 原版尸体是在 `KillAnimation` 协程里建的，所以在击杀瞬间查不到 → 传 false 更准 ✓）
+        /// </param>
+        public static void OnPlayerMurder(PlayerControl killer, PlayerControl victim, PlayerState state,
+                                          bool? withBlink = null)
+        {
+            var body = Game.DeadBodyUtil.FindByPlayer(victim);
+            var pos = body == null ? null : Game.DeadBodyUtil.PositionOf(victim.PlayerId);
+            EventSystem.RunEvent(new PlayerMurderEvent
+            {
+                Player = killer, Victim = victim, State = state,
+                Body = body, DeadBodyPosition = pos, WithBlink = withBlink ?? (body != null),
+            });
+        }
+
         public static bool OnPlayerTryMurder(PlayerControl killer, PlayerControl victim) { var ev = new PlayerTryMurderEvent { Player = killer, Victim = victim }; EventSystem.RunEvent(ev); return !ev.IsCanceled; }
-        public static void OnPlayerDeath(PlayerControl player, DeathReason reason, PlayerControl killer = null, PlayerState state = PlayerState.Dead) => EventSystem.RunEvent(new PlayerDeathEvent { Player = player, Reason = reason, Killer = killer, State = state });
+
+        /// <summary>死亡事件：**顺带把尸体对象解析出来** ✓（放逐/自杀 → null，正常现象 ✓）</summary>
+        /// <param name="player">死者 ✓</param>
+        /// <param name="reason">死因 ✓</param>
+        /// <param name="killer">凶手（放逐/自杀时 null ✓）</param>
+        /// <param name="state">死因状态 ✓</param>
+        /// <param name="withBlink">有没有原版击杀动画；**不传 = 按"有没有尸体"自动判断** ✓（放逐没有尸体 → false ✓）</param>
+        public static void OnPlayerDeath(PlayerControl player, DeathReason reason, PlayerControl killer = null,
+                                         PlayerState state = PlayerState.Dead, bool? withBlink = null)
+        {
+            var body = Game.DeadBodyUtil.FindByPlayer(player);
+            var pos = body == null ? null : Game.DeadBodyUtil.PositionOf(player.PlayerId);
+
+            // ★ 尸体事件（2026-10-25 新增）—— 只在**真的有尸体**时触发 ✓
+            if (body != null)
+                EventSystem.RunEvent(new DeadBodyInstantiateEvent(player, body, killer, state, pos));
+
+            EventSystem.RunEvent(new PlayerDeathEvent
+            {
+                Player = player, Reason = reason, Killer = killer, State = state,
+                Body = body, DeadBodyPosition = pos, WithBlink = withBlink ?? (body != null),
+            });
+        }
         public static void OnPlayerRevive(PlayerControl player, PlayerControl healer = null) => EventSystem.RunEvent(new PlayerReviveEvent { Player = player, Healer = healer });
         public static void OnPlayerDisconnect(PlayerControl player) => EventSystem.RunEvent(new PlayerDisconnectEvent { Player = player });
         public static PlayerCheckCanKillEvent OnPlayerCheckCanKill(PlayerControl killer, PlayerControl target) { var ev = new PlayerCheckCanKillEvent { Player = killer, Target = target }; EventSystem.RunEvent(ev); return ev; }

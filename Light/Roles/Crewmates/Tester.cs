@@ -11,22 +11,6 @@ using UnityEngine;
 
 namespace Light.Roles.Crewmates;
 
-/// <summary>
-/// **测试者**（用户 2026-10-10 要求："写一个测试者，船员职业，淡白色，有一个 Rpc 触发器可以触发 Rpc，
-/// 以及所有的按钮，点击后聊天框发消息给反馈" ✓）。
-///
-/// 用途：**不进正常分配**（`CanBeAssigned => false` ✓），只在自由模式 / 调试面板里手动切成它 ✓，
-/// 然后把「按钮系统的每一种按钮 + RPC 往返」都点一遍 ✓，
-/// 每一步都在**聊天框**里给自己发一条反馈 ✓ —— 有反馈 = 这条链路通了 ✓，没反馈 = 断在哪一步一目了然 ✓
-///
-/// 覆盖的按钮类型（"所有的按钮" ✓）：
-///   · 普通按钮（有冷却 10s ✓ → 冷却结束时发消息 ✓）
-///   · 击杀按钮（原版击杀图标 + 目标追踪 ✓）
-///   · 效果按钮（6s 持续 ✓ → 开始 / 颤动 / 结束 各发一条 ✓）
-///   · 会议按钮（会议中右下角 ✓）
-///   · 会议目标按钮（会议中点头像 ✓）
-///   · RPC 触发按钮（0 冷却 ✓ → 广播一条 RPC ✓ → **所有客户端**都会在聊天框看到它 ✓）
-/// </summary>
 public class Tester : RoleTemplate
 {
     public const string Code = "Tester";
@@ -37,6 +21,9 @@ public class Tester : RoleTemplate
 
     /// <summary>船员阵营 ✓（测试用，不参与真实胜负逻辑之外的东西 ✓）</summary>
     public override RoleCategory RoleCategory => RoleCategory.Crewmate;
+
+    public override string From => null;
+    public override RoleConfigBase[] RoleConfiguration => Array.Empty<RoleConfigBase>();
 
     /// <summary>**淡白色**（比普通船员白、但不到纯白，避免和名字/描边糊在一起 ✓）</summary>
     public override LightInDark.Color Color => new(0.93f, 0.93f, 0.97f, 1f);
@@ -137,14 +124,15 @@ public class Tester : RoleTemplate
                 var fxConfig = new RoleButtonConfig()
                     .SetLabel("测试·效果")
                     .SetCooldown(8f);
+                // ★ 2026-10-25：`effectDuration` 现在是**必选**（照 NOS）→ 直接在这里传 6f ✓
+                //   （原来是创建完再 `_effectButton.EffectDuration = 6f;` ✗ 忘了写就静默变成"持续到手动取消"）
                 _effectButton = AbilityButtonFactory.CreateEffect(this, fxConfig, () =>
                 {
                     Say("效果按钮：点击 ✓（6s 效果，最后 3s 会颤动 ✓）");
-                });
+                }, 6f);
 
                 if (_effectButton != null)
                 {
-                    _effectButton.EffectDuration = 6f;
                     _effectButton.ShowEffectCountdown = true;
 
                     // ★ 用户要求的那套开关：剩余 3 秒开始颤动 ✓（= 原版"解除变形" ✓）
