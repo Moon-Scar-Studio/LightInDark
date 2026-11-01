@@ -4,9 +4,11 @@ using System.Linq;
 using Light.UI.HudUI;
 using Light.UI.MainMenu;
 using Light.UI.Window;
+using Light.Modifiers;             // ModifierRegistry（【2026-11-01 合并自 `/LightInDark (2)`】✓）
 using LightInDark;                 // LightInDark.Color（本模组自研的颜色结构体）
 using LightInDark.Configuration;   // RoleCategory 在这里（不是 LightInDark.Roles）
 using LightInDark.Core;
+using LightInDark.Modifiers;       // Modifier / ModifierManager ✓
 using LightInDark.Roles;
 using TMPro;
 using UnityEngine;
@@ -55,6 +57,8 @@ public static class RoleDebugPanel
     private static GradientButton? _button;
     private static HudUIWindow? _window;
     private static int _page;
+    /// <summary>是否在“附加身份”（修饰器）页 ✓（合并自 `/LightInDark (2)`）</summary>
+    private static bool _showModifiers;
 
     /// <summary>由 <c>HudManager.Update</c> 的 postfix 每帧驱动。</summary>
     public static void Tick()
@@ -238,7 +242,22 @@ public static class RoleDebugPanel
 
             // 顶部：当前职业
             w.AddText($"当前职业：{CurrentRoleName()}", 1.3f, TextAlignmentOptions.Center);
-            w.AddMargin(0.12f);
+            w.AddMargin(0.08f);
+
+            // 【2026-11-01 合并自 `/LightInDark (2)`】附加身份（修饰器）页 ✓
+            //   合并进来的 `Flash` 修饰器**没有任何职业会发放** ✗ →
+            //   没有这个入口就完全没法测 ✓（这里手动挂到本地玩家身上 ✓）
+            w.AddButton(_showModifiers ? "返回职业" : "附加身份",
+                () => { _showModifiers = !_showModifiers; _page = 0; BuildContent(w); },
+                new Vector2(2.4f, 0.42f), null);
+            w.AddMargin(0.08f);
+
+            if (_showModifiers)
+            {
+                BuildModifiers(w);
+                w.ApplyCjkFont();
+                return;
+            }
 
             if (all.Count == 0)
             {
@@ -286,6 +305,78 @@ public static class RoleDebugPanel
         catch (Exception ex)
         {
             LightLogger.LogError("[RoleDebugPanel.BuildContent]", ex);
+        }
+    }
+
+    /// <summary>
+    /// “附加身份”页：列出所有已注册的修饰器，点一下挂到**本地玩家**身上 ✓
+    /// （【2026-11-01 合并自 `/LightInDark (2)`】，签名已适配当前 `ModifierManager.AddModifier(Player, Modifier)` ✓）
+    /// </summary>
+    private static void BuildModifiers(HudUIWindow w)
+    {
+        try
+        {
+            var me = LightInDark.Game.GameManager.Instance?.LocalPlayer;
+            var modifiers = ModifierRegistry.All;
+
+            if (modifiers.Count == 0)
+            {
+                w.AddText("（没有注册任何附加身份）", 1.2f, TextAlignmentOptions.Center);
+                return;
+            }
+
+            foreach (var modifier in modifiers)
+            {
+                var m = modifier;   // 闭包捕获 ✓
+                bool has = me != null && ModifierManager.HasModifier(me, m.Key);
+                string label = (has ? "✔ " : "") + m.Name;
+
+                w.AddButton(label, () => ToggleModifier(m), null, null);
+            }
+
+            w.AddMargin(0.06f);
+            w.AddButton("全部移除", () =>
+            {
+                try
+                {
+                    if (me != null)
+                        foreach (var rm in ModifierManager.GetModifiers(me))
+                            ModifierManager.RemoveModifier(me, rm.Definition.Key);
+                }
+                catch (Exception ex) { LightLogger.LogWarning($"[RoleDebugPanel] 移除修饰器失败：{ex.Message}"); }
+                if (_window != null) BuildContent(_window);
+            }, new Vector2(1.9f, 0.42f), null);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[RoleDebugPanel.BuildModifiers]", ex);
+        }
+    }
+
+    /// <summary>给本地玩家挂 / 摘一个修饰器 ✓</summary>
+    private static void ToggleModifier(Modifier modifier)
+    {
+        try
+        {
+            var me = LightInDark.Game.GameManager.Instance?.LocalPlayer;
+            if (me == null || modifier == null) return;
+
+            if (ModifierManager.HasModifier(me, modifier.Key))
+            {
+                ModifierManager.RemoveModifier(me, modifier.Key);
+                LightLogger.Log($"[RoleDebugPanel] 已移除附加身份 → {modifier.Name}");
+            }
+            else
+            {
+                ModifierManager.AddModifier(me, modifier);
+                LightLogger.Log($"[RoleDebugPanel] 已添加附加身份 → {modifier.Name}");
+            }
+
+            if (_window != null) BuildContent(_window);
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[RoleDebugPanel.ToggleModifier]", ex);
         }
     }
 

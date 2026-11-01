@@ -13,6 +13,60 @@ namespace LightInDark.RPCs
     /// </summary>
     public static class RpcDefinitions
     {
+        // ═══════════════════════════════════════════════════════════════════
+        //  【2026-11-01 自 D:\Coding\C#\LightInDark (2) 合并进来】
+        //  挑战者 / 交换者 / 会议投票 / 修饰器 这几套功能依赖的 RPC。
+        //  形状与对面**完全一致**（事件 + 一行转发 ✓），所以调用方不用改：
+        //    · `MeetingVoteApi.Initialize()` 订阅 OnMeeting* 三个事件 ✓
+        //    · Challenger 职业订阅 OnChallenger* ✓
+        // ═══════════════════════════════════════════════════════════════════
+        public static event Action<byte, byte>? OnChallengerSetRival;
+        public static event Action<byte, byte>? OnChallengerSelect;
+        public static event Action<byte>? OnChallengerResult;
+
+        [LidRPC]
+        public static void ChallengerSetRival(byte challengerId, byte rivalId)
+            => OnChallengerSetRival?.Invoke(challengerId, rivalId);
+
+        [LidRPC]
+        public static void ChallengerSelect(byte playerId, byte choice)
+            => OnChallengerSelect?.Invoke(playerId, choice);
+
+        [LidRPC]
+        public static void ChallengerResult(byte result)
+            => OnChallengerResult?.Invoke(result);
+
+        public static event Action<byte, string, float>? OnAddModifier;
+        public static event Action<byte, string>? OnRemoveModifier;
+
+        [LidRPC]
+        public static void AddModifier(byte playerId, string key, float value)
+            => OnAddModifier?.Invoke(playerId, key, value);
+
+        [LidRPC]
+        public static void RemoveModifier(byte playerId, string key)
+            => OnRemoveModifier?.Invoke(playerId, key);
+
+        public static event Action<byte, byte, int>? OnMeetingStoreVote;
+        public static event Action<byte, byte, int>? OnMeetingCustomVote;
+        public static event Action<byte, int>? OnMeetingSetStored;
+
+        [LidRPC]
+        public static void MeetingStoreVote(byte playerId, byte targetId, int amount)
+            => OnMeetingStoreVote?.Invoke(playerId, targetId, amount);
+
+        [LidRPC]
+        public static void MeetingCustomVote(byte voterId, byte targetId, int weight)
+            => OnMeetingCustomVote?.Invoke(voterId, targetId, weight);
+
+        [LidRPC]
+        public static void MeetingSetStored(byte playerId, int value)
+            => OnMeetingSetStored?.Invoke(playerId, value);
+
+        [LidRPC]
+        public static void MeetingSwap(byte first, byte second)
+            => MeetingVoteApi.SetSwap(first, second);
+
         [LidRPC(OnlyHost = true)]
         public static void SyncVictory(GameEndReason reason, string teamCode, byte[] winnerIds)
             => Game.EndGameManager.ApplyResult(reason, teamCode, winnerIds);

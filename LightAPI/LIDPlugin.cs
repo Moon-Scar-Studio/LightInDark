@@ -42,6 +42,12 @@ public partial class LIDPlugin : BasePlugin
         {
             Harmony.PatchAll();
             LidRpcRegistry.ScanAndPatch(Harmony);
+
+            // 【2026-11-01 自 `/LightInDark (2)` 合并】会议投票 API 需要订阅 RPC 事件 ✓
+            //   （市长存票 / 交换者换票 都走它 ✓；不初始化则事件没人接 ✓ 数据静默丢失 ✗）
+            try { Game.MeetingVoteApi.Initialize(); }
+            catch (Exception ex) { LightLogger.LogError("[LIDPlugin] MeetingVoteApi 初始化失败", ex); }
+
             EventSystem.RegisterAssembly(typeof(LIDPlugin).Assembly);
 
             // ★ 也扫一遍 **API 程序集**里的职业（2026-10-06 审查 #18）：

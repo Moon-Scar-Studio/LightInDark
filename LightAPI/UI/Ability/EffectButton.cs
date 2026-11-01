@@ -54,6 +54,12 @@ namespace LightInDark.UI.Ability
         /// <summary>是否在效果中显示倒计时（默认 true）。</summary>
         public bool ShowEffectCountdown { get; set; } = true;
 
+        /// <summary>
+        /// 效果期间是否画进度环（【2026-11-01 自 `/LightInDark (2)` 合并】✓）。
+        /// `false` = 只跑计时、不显示环（挑战者那种"等待延迟"用它 ✓）
+        /// </summary>
+        public bool ShowEffectRing { get; set; } = true;
+
         // ── “时间快没了就抖动” ──（原版 `ActionButton.SetFillUp` 的行为 ✓）
         private bool _jitterEnabled = true;      // 默认开（和原版解除变形一致 ✓）
         private float _jitterThreshold = 3f;     // 剩余 3 秒开始抖（原版写死 3f ✓）
@@ -329,6 +335,14 @@ namespace LightInDark.UI.Ability
                 // ⚠️ 顺序：先 ApplyFillUpDisplay（它会按原版"最后 3 秒才显示数字"的规则**隐藏**数字 ✗），
                 //    再强行把数字点亮成绿色 ✓ —— 反过来就会被它盖掉 ✓
                 ApplyFillUpDisplay(_effectTimer, EffectDuration, _jitterEnabled, _jitterThreshold);
+
+                // ★ `ShowEffectRing = false` → 把环清空（合并自 `/LightInDark (2)` 的语义 ✓）
+                //   只清环、不动数字与抖动，因为"不显示环"不等于"不显示剩余时间" ✓
+                if (!ShowEffectRing)
+                {
+                    var ringAction = Button;
+                    if (ringAction != null) ringAction.SetCooldownFill(0f);
+                }
 
                 // ★★ 2026-10-10 用户："绿字确实出来了，但我想要点击时就显示绿字显示剩余时间" ✓
                 //   原版 `SetFillUp` 的数字是"最后 3 秒才出现" ✗ → 效果按钮上前几秒只能看进度环 ✓

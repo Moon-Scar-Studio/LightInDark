@@ -97,6 +97,19 @@ public partial class LightPlugin : BasePlugin
             RoleConfigRegistrar.Register();   // 职业配置块 + 职业专属项
             GameModeConfigRegistrar.Register();
             AssignmentConfigRegistrar.Register();   // 分配设置（船员/内鬼/中立上限，审查 B7）
+
+            // 【2026-11-01 自 `/LightInDark (2)` 合并】修饰器系统（Flash 等 ✓）
+            //   ⚠️ `HudLayoutConfigRegistrar.Register()` **故意不调** ✗：
+            //      对面的 HUD 布局配置（`lid.hud.*`）已在本项目迁移到 **Light 页签**
+            //      （`LightOptionsRegistry.ApplyHudLayout` ✓ 见 AGENTS §6），
+            //      再注册一次会出现两套同名配置项 ✗ → 那个文件保留但不再使用 ✓
+            try
+            {
+                Light.Modifiers.ModifierRegistry.Initialize();
+                Light.Config.ModifierConfigRegistrar.Register();
+            }
+            catch (Exception ex) { LightLogger.LogError("[Load] 修饰器系统初始化失败", ex); }
+
             Roles.Assignment.RoleHealthCheck.Run();
 
             try { LightInDark.Configuration.PresetStore.Initialize(); }

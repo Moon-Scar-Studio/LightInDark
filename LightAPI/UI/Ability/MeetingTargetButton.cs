@@ -118,6 +118,21 @@ public class MeetingTargetButton : RoleButtonBase
     private bool CanTarget(Target target) => target.Player != null && target.Area != null
         && !target.Area.AmDead && (target.Player.Data != null && !target.Player.Data.Disconnected)
         && (_targetConfig.CanUseTarget?.Invoke(target.Player) ?? true);
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  【2026-11-01 自 `/LightInDark (2)` 合并】按玩家上色（交换者用来标"已被换过"的人 ✓）
+    // ═══════════════════════════════════════════════════════════════════
+    private readonly Dictionary<byte, UnityEngine.Color> _targetColors = new();
+
+    /// <summary>给某个玩家的目标按钮上色（传 null = 恢复默认色 ✓）。</summary>
+    public void SetTargetColor(byte playerId, UnityEngine.Color? color)
+    {
+        if (color.HasValue) _targetColors[playerId] = color.Value;
+        else _targetColors.Remove(playerId);
+    }
+
+    /// <summary>清掉所有自定义颜色 ✓</summary>
+    public void ClearTargetColors() => _targetColors.Clear();
     protected override bool ShouldShow => !IsDeadObject && _meeting != null && _player.IsLocal
         && !_player.IsDead && (_config.CanShow?.Invoke() ?? true);
     protected override bool CanAcceptInput => ShouldShow && _meeting != null;
@@ -134,8 +149,19 @@ public class MeetingTargetButton : RoleButtonBase
             if (target.Object == null) continue;
             bool show = ShouldShow && CanTarget(target) && (_targetConfig.CanAddTarget?.Invoke(target.Player) ?? true);
             target.Object.SetActive(show);
-            if (target.Renderer != null) target.Renderer.color = show && ShouldBeUsable
-                ? UnityEngine.Color.white : new UnityEngine.Color(0.4f, 0.4f, 0.4f, 1f);
+            if (target.Renderer != null)
+            {
+                // 默认色用配置里的 `DefaultColor` ✓；`SetTargetColor` 指定过的优先（仅在显示时 ✓）
+                var baseColor = show && ShouldBeUsable
+                    ? _targetConfig.DefaultColor
+                    : new UnityEngine.Color(0.4f, 0.4f, 0.4f, 1f);
+
+                if (show && target.Player != null
+                    && _targetColors.TryGetValue(target.Player.PlayerId, out var custom))
+                    baseColor = custom;
+
+                target.Renderer.color = baseColor;
+            }
         }
     }
     internal void OnMeetingEnd() => DestroyUI();

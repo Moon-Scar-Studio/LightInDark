@@ -10,6 +10,8 @@ public sealed class MeetingTargetButtonConfig : RoleButtonConfig
 {
     public Vector3 Position = new(-0.95f, 0.03f, -1.31f);
     public Vector3 Scale = Vector3.one;
+    /// <summary>目标按钮的默认颜色（`SetTargetColor` 没指定目标的用它 ✓，合并自 `/LightInDark (2)`）。</summary>
+    public UnityEngine.Color DefaultColor = UnityEngine.Color.white;
     public Sprite HoverIcon;
     public bool UseTemplateScale = true;
     public Action OnHover;
