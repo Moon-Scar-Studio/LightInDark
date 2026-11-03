@@ -5,6 +5,7 @@ using HarmonyLib;
 using Light.Config;
 using Light.UI;
 using Light.UI.Help;
+using Light.UI.HudUI;
 using Light.UI.MainMenu;
 using Light.UI.Window;
 using Light.Utilities;
@@ -134,6 +135,87 @@ public static class MainMenuPatch
             _bgPanel = null;
             LightLogger.LogWarning("开始布局");
 
+            // ★ 2026-11-03 用户："第一次进主界面贴图不替换" ✓
+            //   根因：`MainMenuButtonSpritePatch.Suppress` 是**静态字段** ✓ ——
+            //   上一次会话切成「原版」后它是 true ✗，下次启动第一帧仍为 true ✗ →
+            //   贴图替换被整体跳过（要等 `MainMenuButtonStyler.Apply` 再跑一次才恢复 ✗）。
+            //   → 布局一开始就按**存档里的样式**重置它 ✓（与 `Apply` 里的判断完全一致 ✓）
+            try
+            {
+                Patches.MainMenuButtonSpritePatch.Suppress =
+                    AppearanceSettings.ButtonStyle != MainButtonStyle.Mod;
+                LightLogger.Log($"[Light] 贴图替换开关按存档样式初始化 → Suppress={Patches.MainMenuButtonSpritePatch.Suppress}" +
+                                $"（样式={AppearanceSettings.ButtonStyle}）");
+            }
+            catch { }
+
+            // ═══════════════════════════════════════════════════════════════
+            //  ★ 2026-11-03 **解耦**（用户："把 MainMenuPatch 解耦开，
+            //   让原版就是和原版一样，只是多了大标题和按钮" ✓）
+            //
+            //  「原版」样式 = **一个字节的原版布局都不碰** ✓：
+            //    ✗ 不搬 LeftPanel / 不隐藏 Divider / 不挪 BackgroundTexture
+            //    ✗ 不建 LightButton / LightScreen / 子屏 / 画廊
+            //    ✗ 不做右侧面板滑入、不改 ModStamp
+            //  只做两件事 ✓：① 建那四个按钮  ② 摆大标题 + 署名（`MainMenuStyleLayout` ✓）
+            // ═══════════════════════════════════════════════════════════════
+            if (AppearanceSettings.ButtonStyle == MainButtonStyle.Vanilla)
+            {
+                try
+                {
+                    // ★ 用户："背景图只在原版样式砍掉" ✓
+                    Light.UI.MainMenu.BackgroundRenderer.Suppressed = true;
+                    Light.UI.MainMenu.BackgroundRenderer.Shutdown();
+
+                    // ★ 用户："就算是原版样式，也应和 NOS 原来添加 Nebula 按钮相同，添加 Light 按钮" ✓
+                    // ★ 用户 2026-11-03："原版要建 LightScreen…跟 NOS 一样" ✓ → 原版也建 LightScreen ✓
+                    //   （所以 LightButton 走**默认分支** ✓ = ResetScreen + 打开 LightScreen ✓，和 NOS 一致 ✓）
+                    SetupLightScreen(__instance);
+                    SetupSubScreen(__instance);
+
+                    try
+                    {
+                        var vb = FindButtons();
+                        float vh = 0.7f;
+                        if (vb.TryGetValue("NewsButton", out var vNews) && vb.TryGetValue("AcountButton", out var vAcct))
+                            vh = vNews.transform.localPosition.y - vAcct.transform.localPosition.y;
+                        CreateLightButton(__instance, vb, vh);   // 默认 → 打开 LightScreen ✓（NOS 同款 ✓）
+                    }
+                    catch (Exception lex)
+                    {
+                        LightLogger.LogWarning($"[MainMenuPatch] 原版样式创建 LightButton 失败：{lex.Message}");
+                    }
+
+                    // ★★ 用户 2026-11-03 两次强调："看 NOS" / "左边的按钮偏了，开始按钮超出 panel"
+                    //   → **完整照 Nova `MainMenuPatch.cs:54-78`**（缺一步就会溢出 ✗）：
+                    //     ① auLogo：`PercentWidth = 0.14` + `DoSetUp()` + 位置 (-0.8, 0.25) ✓
+                    //     ② **`ReworkedLeftPanel`**：复制 sprite/tile/drawMode、`size + (0, 0.5)`、
+                    //        位置 `(0, height*0.5)`、登记进 Scaler ✓，旧面板 renderer 关掉 ✓
+                    //        ★ 这一步就是"按钮移上去了、但面板没变高 → 开始按钮溢出"的解药 ✓✓
+                    //     ③ 主按钮上移 height（`|x|<0.1` 的才移）✓  ④ Divider 上移 height ✓
+                    try
+                    {
+                        ApplyNovaLeftPanel(__instance);
+                    }
+                    catch (Exception bex)
+                    {
+                        LightLogger.LogWarning($"[MainMenuPatch] 原版样式 Nova 左栏失败：{bex.Message}");
+                    }
+
+                    SetupExtraButtons(__instance);
+                    MainMenuStyleLayout.Apply(__instance);
+                    LightLogger.Log("[Light] 原版样式：跳过主界面改造 + 建 LightButton/LightScreen（NOS 同款 ✓）+ 按钮上移（Nova 同款 ✓）+ 标题/署名/四按钮 ✓");
+                }
+                catch (Exception ex)
+                {
+                    LightLogger.LogError("[MainMenuPatch] 原版样式布局失败", ex);
+                }
+                return;
+            }
+
+            // 其它样式：自定义背景照常显示 ✓（"背景图只在原版样式砍掉" ✓）
+            Light.UI.MainMenu.BackgroundRenderer.Suppressed = false;
+
             VanillaAsset.Preload();
             var modStamp = FindGO("ModStamp");
             if (modStamp != null)
@@ -148,10 +230,24 @@ public static class MainMenuPatch
             // ★ 2026-10-25 诊断：整个布局（进主菜单时跑一次）到底花了多少 ms
             //    —— 如果还卡，就用这个数判断是我们这段还是原版/别的东西 ✓
             var layoutSw = System.Diagnostics.Stopwatch.StartNew();
+            // ⚠️ 2026-11-03：分段计时（用户报"进主界面非常卡"，旧日志只有总数 1635ms ✗ 看不出花在哪）
+            long markFind = 0, markPanel = 0;
             var bg = FindGO("BackgroundTexture");
             bg?.SetActive(!_bgInitialMoveDone);
 
             var btns = FindButtons();
+            markFind = layoutSw.ElapsedMilliseconds;   // ← 找按钮/面板 用时
+
+            // 分段计时：每个阶段结束调一次（只在布局路径上跑，一次一条，成本可忽略 ✓）
+            var phaseSb = new System.Text.StringBuilder(64);
+            long phaseLast = markFind;
+            void Phase(string name)
+            {
+                long now = layoutSw.ElapsedMilliseconds;
+                phaseSb.Append(name).Append('=').Append(now - phaseLast).Append("ms ");
+                phaseLast = now;
+                markPanel = now;
+            }
 
             var leftPanel = FindGO("LeftPanel");
             if (leftPanel != null)
@@ -221,27 +317,43 @@ public static class MainMenuPatch
             CreateLightButton(__instance, btns, height);
             AdjustIcons();
             ColorAllButtons();
+            Phase("按钮样式");
             CloneTitleToMainMenu(__instance);
+
+            // ═══════════════════════════════════════════════════════════════
+            //  左栏：两种观感 ✓（用户 2026-11-03："左栏要 Nova 版本" ✓）
+            //   · MOD     → 老做法：把左栏拆空 + 隐藏（我们自己的观感 ✓）
+            //   · 美化版   → **照 Nova**（`MainMenuPatch.cs:54-78` ✓）：
+            //        ① 保留 LeftPanel ✓
+            //        ② 用 `ReworkedLeftPanel` 复制原面板 sprite / tileMode / drawMode，
+            //           位置 `y = height*0.5` ✓、`size + (0, 0.5)` ✓、旧面板 renderer `enabled = false` ✓
+            //        ③ 主按钮整体上移 `height` ✓（Credits/Quit 除外：|x| < 0.1 的才移 ✓）
+            //        ④ `Main Buttons/Divider` 也上移 `height` ✓（**不是隐藏** ✗）
+            // ═══════════════════════════════════════════════════════════════
+            // ⚠️ 2026-11-03：美化版已删除 ✓ → 左栏恢复唯一的 MOD 做法（拆空 + 隐藏 ✓）
             if (leftPanel != null)
             {
-                var mainButtons = leftPanel.transform.FindChild("Main Buttons");
+                var mainButtonsRoot = leftPanel.transform.FindChild("Main Buttons");
                 leftPanel.transform.localScale = new Vector3(0.7f, 0.7f, 0.7f);
                 for (int i = 0; i < leftPanel.transform.childCount; i++)
                     leftPanel.transform.GetChild(i).SetParent(leftPanel.transform.parent);
-                if (mainButtons != null)
-                    mainButtons.transform.localPosition = new Vector3(-4.0f, 0f, 0f);
+                if (mainButtonsRoot != null)
+                    mainButtonsRoot.transform.localPosition = new Vector3(-4.0f, 0f, 0f);
                 leftPanel.SetActive(false);
             }
             FindGO("Divider")?.SetActive(false);
             SetupExtraButtons(__instance);
             ApplyButtonEffects(__instance);
+            Phase("额外按钮");
             SetupRightPanel(__instance);
+            Phase("右侧面板");
 #if !DEBUG
             RemoveFreePlayAndCenterHowToPlay(__instance);   // Release：去掉练习模式，玩法说明居中
 #endif
             SetupLightScreen(__instance);
             SetupSubScreen(__instance);
             SetupGalleryScreen(__instance);
+            Phase("Light屏/画廊");
             MoveScreenTint(__instance);
             var decoTex = new Texture2D(1, 1);
             decoTex.SetPixel(0, 0, Color.white);
@@ -276,7 +388,9 @@ public static class MainMenuPatch
 #endif
 
             layoutSw.Stop();
+            // ⚠️ 2026-11-03：带上分段耗时（找按钮 / 各阶段 / 收尾），一眼定位大头 ✓
             LightLogger.LogWarning($"[Light.UI] === 布局完成 === 本次耗时 {layoutSw.ElapsedMilliseconds}ms " +
+                                   $"（找按钮 {markFind}ms / {phaseSb} / 收尾 {layoutSw.ElapsedMilliseconds - markPanel}ms）" +
                                    "（用于判断进主菜单卡是不是我们这段；>100ms 值得继续优化 ✓）");
 
             // 制作人员/退出
@@ -330,7 +444,100 @@ public static class MainMenuPatch
         catch { }
     }
 
-    private static void CreateLightButton(MainMenuManager __instance, Dictionary<string, PassiveButton> btns, float height)
+    // ⚠️ 2026-11-03：美化版已删除 ✓ → `ApplyNovaLeftPanel`（Nova 左栏重做）随之删除 ✗
+    //   如果以后要做"左栏美化"，照 Nova `MainMenuPatch.cs:54-78` 重写即可 ✓
+
+    /// <summary>
+    /// **完整照 Nova**（`Patches/Old/MainMenuPatch.cs:54-78` ✓）处理左栏 ✓：
+    ///   ① auLogo：`PercentWidth = 0.14` → `DoSetUp()` → 位置 `(-0.8, 0.25)` ✓
+    ///   ② 新建 `ReworkedLeftPanel`：复制原面板 sprite / tileMode / drawMode ✓，
+    ///      位置 `(0, height*0.5)` ✓、`size + (0, 0.5)` ✓、登记进 `SlicedAspectScaler` ✓
+    ///   ③ 旧面板 renderer `enabled = false` ✓（对象还在 ✓）
+    ///   ④ 主按钮上移 `height`（`|x| < 0.1` 的才移 ✓ = Credits/Quit 不动 ✓）
+    ///   ⑤ `Main Buttons/Divider` 也上移 `height` ✓
+    /// ⚠️ ② 不能省 ✗ —— 只上移按钮、不把面板变高，就会"开始按钮超出 panel" ✓（用户截图 ✓）
+    /// </summary>
+    private static void ApplyNovaLeftPanel(MainMenuManager __instance)
+    {
+        try
+        {
+            var leftPanel = FindGO("LeftPanel");
+            if (leftPanel == null) return;
+
+            // ① auLogo
+            try
+            {
+                var sizer = leftPanel.transform.FindChild("Sizer");
+                var auLogo = sizer != null ? sizer.GetComponent<AspectSize>() : null;
+                if (auLogo != null)
+                {
+                    auLogo.PercentWidth = 0.14f;
+                    auLogo.DoSetUp();
+                    auLogo.transform.localPosition += new Vector3(-0.8f, 0.25f, 0f);
+                }
+            }
+            catch { }
+
+            float height = 0.7f;
+            try
+            {
+                var btns = FindButtons();
+                if (btns.TryGetValue("NewsButton", out var news) && btns.TryGetValue("AcountButton", out var acct))
+                    height = news.transform.localPosition.y - acct.transform.localPosition.y;
+            }
+            catch { }
+
+            // ② ReworkedLeftPanel（★ 关键：面板变高 0.5 ✓）
+            try
+            {
+                var oldPanel = leftPanel.GetComponent<SpriteRenderer>();
+                if (oldPanel != null)
+                {
+                    var reworked = UnityHelper.CreateObject<SpriteRenderer>(
+                        "ReworkedLeftPanel", leftPanel.transform, new Vector3(0f, height * 0.5f, 0f));
+                    reworked.sprite = oldPanel.sprite;
+                    reworked.tileMode = oldPanel.tileMode;
+                    reworked.drawMode = oldPanel.drawMode;
+                    reworked.size = oldPanel.size + new Vector2(0f, 0.5f);
+
+                    var scalerList = Object.FindObjectOfType<SlicedAspectScaler>();
+                    var scaled = leftPanel.GetComponent<AspectScaledAsset>();
+                    if (scalerList != null && scaled != null) scalerList.objectsToScale.Add(scaled);
+
+                    oldPanel.enabled = false;   // ③
+                }
+            }
+            catch (Exception ex) { LightLogger.LogWarning($"[MainMenuPatch] ReworkedLeftPanel 失败：{ex.Message}"); }
+
+            // ④ 主按钮上移
+            try
+            {
+                foreach (var button in __instance.mainButtons)
+                {
+                    if (button == null) continue;
+                    if (Math.Abs(button.transform.localPosition.x) < 0.1f)
+                        button.transform.localPosition += new Vector3(0f, height, 0f);
+                }
+            }
+            catch { }
+
+            // ⑤ Divider 上移
+            try
+            {
+                var mainButtons = leftPanel.transform.FindChild("Main Buttons");
+                var divider = mainButtons != null ? mainButtons.FindChild("Divider") : null;
+                if (divider != null) divider.transform.localPosition += new Vector3(0f, height, 0f);
+            }
+            catch { }
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.ApplyNovaLeftPanel]", ex);
+        }
+    }
+
+    private static void CreateLightButton(MainMenuManager __instance, Dictionary<string, PassiveButton> btns, float height,
+                                          Action? onClickOverride = null)
     {
         try
         {
@@ -339,6 +546,10 @@ public static class MainMenuPatch
             clone.name = "LightButton";
             clone.transform.localPosition =
                 settings.transform.localPosition - new Vector3(0f, height, 0f);
+
+            // ⚠️ 2026-11-03 修：图标缩放别写死 0.1 ✗ —— 先记下设置按钮图标的**原始缩放** ✓
+            //   （写死会让图标在大分辨率下变成一个小点 ✓，用户说"Light 按钮也不对"就是这个 ✓）
+            Vector3? iconScale = null;
 
             var tex = GraphicsHelper.LoadTextureFromResources("Light.Resources.Lobby.LightInDark.png");
             if (tex != null)
@@ -351,8 +562,20 @@ public static class MainMenuPatch
                     var icon = child.FindChild("Icon");
                     if (icon != null)
                     {
-                        icon.localScale = new Vector3(0.1f, 0.1f, 1f);
+                        // ⚠️⚠️ 2026-11-03 用户："Light 按钮上面的标题变得莫名其妙的大" ✓
+                        //   Nova 里 `icon.localScale = (1,1,1)` 成立，是因为**它的图标本来就是小图** ✓；
+                        //   我们的 `LightInDark.png` 是 **1200×900 的大 logo** ✗
+                        //   → 直接 (1,1,1) 就铺满整个左栏 ✓✓（截图里那两处叠在一起的大标题就是它 ✓）
+                        //   ★ 修法：按「原图标高度 / 新图高度」等比换算 ✓
+                        //     这样不管以后换成什么尺寸的图，图标视觉大小都与原设置按钮一致 ✓
                         var sr = icon.GetComponent<SpriteRenderer>();
+                        if (sr != null && sr.sprite != null)
+                        {
+                            float oldH = sr.sprite.bounds.size.y;
+                            float newH = spr.bounds.size.y;
+                            if (newH > 0.0001f && oldH > 0.0001f)
+                                icon.localScale = icon.localScale * (oldH / newH);
+                        }
                         if (sr != null) sr.sprite = spr;
                     }
                 }
@@ -363,6 +586,15 @@ public static class MainMenuPatch
                 passive.OnClick = new Button.ButtonClickedEvent();
                 passive.OnClick.AddListener((UnityEngine.Events.UnityAction)(() =>
                 {
+                    // ⚠️ 2026-11-03：原版样式下 `_lightScreen` **不存在** ✗（那是 MOD 布局造的 ✓）
+                    //   → 原版样式的 LightButton 改成打开「主界面样式」选择器 ✓
+                    //     （不然点了什么都不发生 ✗ —— 这就是"Light 按钮也不对" ✓）
+                    if (onClickOverride != null)
+                    {
+                        onClickOverride();
+                        return;
+                    }
+
                     __instance.ResetScreen();
                     _showingPanel = true;
                     if (_lightSubScreen != null) _lightSubScreen.SetActive(false);
@@ -386,6 +618,18 @@ public static class MainMenuPatch
                 var trans = fp.GetChild(0).GetComponent<TextTranslatorTMP>();
                 if (trans != null) trans.enabled = false;
             }
+            // ★ 照 Nova `MainMenuPatch.cs:108` ✓：把自建按钮登记进原版 `mainButtons`
+            //   （不登记的话：面板切换/重置时它不会跟着原版按钮一起处理 ✓）
+            try
+            {
+                if (__instance.mainButtons != null)
+                    __instance.mainButtons.Add(clone.GetComponent<PassiveButton>());
+            }
+            catch (Exception ex)
+            {
+                LightLogger.LogWarning($"[MainMenuPatch] mainButtons.Add 失败：{ex.Message}");
+            }
+
             var scalerList = Object.FindObjectOfType<SlicedAspectScaler>();
             if (scalerList != null)
             {
@@ -624,6 +868,29 @@ public static class MainMenuPatch
         {
             if (_ejectMenu == null)
             {
+                // ⚠️⚠️ 2026-11-03 性能修复（用户："进入主界面非常卡"）——
+                //   原来这里**每帧**执行 `ui.GetComponentsInChildren<Transform>(true)` ✗：
+                //   它把 MainUI **整棵层级**（数百个 Transform，含未激活）扫一遍 ✓
+                //   一旦"没找到"（层级变了 / 名字改了 / 还没生成 ✗）就会**每帧**重扫 ✗✗
+                //   → 主界面稳定掉帧，而且日志里什么都看不到（因为它是静默的 ✗）
+                //
+                //   ★ 现在：① 每 30 帧才扫一次 ✓ ② 最多扫 40 次就**放弃并记一行日志** ✓
+                //     （真找不到时不该无限消耗，且要能一眼看出"没找到"✗）
+                if (Time.frameCount - _ejectScanFrame < EjectScanInterval) return;
+                _ejectScanFrame = Time.frameCount;
+
+                if (_ejectScanTries >= EjectScanMaxTries)
+                {
+                    if (!_ejectScanGaveUp)
+                    {
+                        _ejectScanGaveUp = true;
+                        LightLogger.LogWarning("[MainMenuPatch] 扫描 40 次仍未找到 EjectButtonMenu，" +
+                                               "已停止扫描（原版可能换了层级；弹射按钮不做屏蔽了）");
+                    }
+                    return;
+                }
+                _ejectScanTries++;
+
                 var ui = __instance.mainMenuUI;
                 if (ui == null) return;
 
@@ -653,6 +920,13 @@ public static class MainMenuPatch
             LightLogger.LogWarning($"[MainMenuPatch.SuppressEjectMenu] {ex.Message}");
         }
     }
+
+    // 弹射按钮扫描节流（见 SuppressEjectMenu_Postfix 的注释 ✓）
+    private const int EjectScanInterval = 30;
+    private const int EjectScanMaxTries = 40;
+    private static int _ejectScanFrame = -100000;
+    private static int _ejectScanTries;
+    private static bool _ejectScanGaveUp;
 
     /// <summary>把玩法说明拉回中间；只有真的被改动时才写日志（最多 5 条，避免刷屏）。</summary>
     private static void EnforceHowToPlayX(string when)
@@ -741,6 +1015,9 @@ public static class MainMenuPatch
             SetUpBtn("关于模组", () => HelpScreen.TryOpenHelpScreen());
             SetUpBtn("成就", () => LightLogger.LogWarning("[Light] 成就 - 待实现"));
             SetUpBtn("Discord", () => Application.OpenURL("https://discord.gg/"));
+
+            // ★ 2026-11-03 用户要求：LightScreen 里一个「主界面样式」按钮 → 三选一窗口 ✓
+            SetUpBtn("主界面样式", () => OpenMainMenuStyleWindow());
             SetUpBtn("更换背景图", () =>
             {
                 if (_lightScreen != null) _lightScreen.SetActive(false);
@@ -833,13 +1110,240 @@ public static class MainMenuPatch
     ///
     /// 现在素材来自磁盘目录（可放自己的图/视频），并使用新的渲染器 + 面板。
     /// </summary>
+    /// <summary>
+    /// 切换主界面样式（用户 2026-11-03 要求 ✓）：
+    /// **先弹确认框** → 确定才写设置并**重载 MainMenu 场景**（取消则什么都不做 ✓）。
+    ///
+    /// ⚠️ 为什么要重载场景 ✗→✓：这两套样式（原版署名 / 美化版）对原版控件做了**破坏性**改动
+    ///    （销毁 `AspectPosition`、重挂 `screenTint`、搬运 `LeftPanel` 子物体… ✗），
+    ///    在同一个场景里"切回来"根本还原不干净 ✗ —— 用户要的就是"重载后按新样式重新搭一遍" ✓。
+    ///    重载前必须先 <see cref="PrepareForSceneReload"/> 把持有场景对象的静态字段清空 ✓，
+    ///    否则下一帧就会访问已销毁对象 ✗（AGENTS §4.6.1 的假 null 坑 ✓）。
+    /// </summary>
+    /// <summary>
+    /// 打开「主界面样式」三选一窗口 ✓
+    /// （主菜单 LightScreen 里那个按钮、以及**原版样式的 LightButton** 都调它 ✓）
+    /// </summary>
+    private static void OpenMainMenuStyleWindow()
+    {
+        try
+        {
+            if (_lightScreen != null) _lightScreen.SetActive(false);
+
+            // ⚠️ 2026-11-03 用户："美化版你删了吧，bug 太多了" ✓ → 只剩 MOD / 原版 两项 ✓
+            var w = HudUI.OpenButtonWindow("主界面样式",
+                new HudUI.ButtonOption("MOD 样式（换贴图）", () => ApplyMainMenuStyle(MainButtonStyle.Mod)),
+                new HudUI.ButtonOption("原版 + 署名（左侧大标题）", () => ApplyMainMenuStyle(MainButtonStyle.Vanilla)));
+
+            // 窗口字体统一成 Mod 字体（Noto Sans SC ✓）
+            w?.ApplyCjkFont();
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.OpenMainMenuStyleWindow]", ex);
+        }
+    }
+
+    /// <summary>
+    /// **开子面板就藏装饰、回主屏再显示** ✓ —— 完全照 ToH
+    /// （`TownOfHost/Patches/MainMenuManagerPatch.cs:100-122` ✓）：
+    ///   · `OpenGameModeMenu / OpenOnlineMenu / OpenEnterCodeMenu / ClickBackOnline /
+    ///      OpenAccountMenu / OpenCredits` 的 Postfix → 藏 ✓
+    ///   · `ResetScreen` 的 Postfix → 显示 ✓
+    /// ★ 这同时解决用户报的两件事 ✓：
+    ///   ① "右侧层级还是错的" ✓（装饰不再压在面板上 ✓）
+    ///   ② "打开 RightPanel 那几个按钮甚至还能点" ✓（面板打开时装饰是 SetActive(false) ✓，点不到 ✓）
+    /// </summary>
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenGameModeMenu))]
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenOnlineMenu))]
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenEnterCodeMenu))]
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.ClickBackOnline))]
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenAccountMenu))]
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.OpenCredits))]
+    [HarmonyPostfix]
+    public static void HideDecorPostfix() => MainMenuStyleLayout.SetDecorVisible(false);
+
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.ResetScreen))]
+    [HarmonyPostfix]
+    public static void ShowDecorPostfix() => MainMenuStyleLayout.SetDecorVisible(true);
+
+    /// <summary>
+    /// **诊断：设置菜单 `Open()` 的 NRE**（用户 2026-11-03 报 "点设置会抛异常" ✓）
+    /// `OptionsMenuBehaviour.Open()` 里会直接用 `JoystickButton / TouchButton / JoystickSizeSlider /
+    /// SoundSlider / MusicSlider / CensorChatButton` ✓ —— 依次判空并打日志 ✓，
+    /// 这样日志里能直接看到**到底哪个字段是 null** ✓（而不是只看到一句 NRE 堆栈 ✗）。
+    /// 只在真的有空字段时才打 ✓，平时零输出 ✓。
+    /// </summary>
+    /// <summary>
+    /// **设置菜单 `ResetText()` 的 NRE 兜底** ✓
+    ///
+    /// 原版 `OptionsMenuBehaviour.ResetText()`（19.0）第一行就是：
+    /// <code>
+    ///   this.JoystickButton.transform.parent.GetComponentInChildren&lt;TextMeshPro&gt;().text = …;
+    /// </code>
+    /// —— **没有判空** ✗ → 只要那个 TMP 拿不到就 NRE ✗，而它被 `Open()` 调用 ✓
+    ///   （用户 2026-11-03 报的"点设置抛 NullReferenceException，堆栈指向 Open()" ✓ 就是这个 ✓）
+    ///
+    /// 我们的处理 ✓：**能跑就照跑** ✓；只有真的缺目标时才 `return false` 跳过 ✗→✓
+    ///   （跳过只影响那两行操作提示的本地化文字 ✓，不影响设置功能 ✓）
+    /// </summary>
+    [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.ResetText))]
+    [HarmonyPrefix]
+    public static bool SafeResetText(OptionsMenuBehaviour __instance)
+    {
+        try
+        {
+            var jb = __instance.JoystickButton;
+            var tb = __instance.TouchButton;
+            if (jb == null || tb == null) return false;
+
+            var jTmp = jb.transform.parent != null ? jb.transform.parent.GetComponentInChildren<TextMeshPro>(true) : null;
+            var tTmp = tb.transform.parent != null ? tb.transform.parent.GetComponentInChildren<TextMeshPro>(true) : null;
+
+            if (jTmp == null || tTmp == null)
+            {
+                if (!_resetTextLogged)
+                {
+                    _resetTextLogged = true;
+                    LightLogger.LogWarning($"[OptionsMenu] ResetText 的目标 TMP 缺失（joystick={jTmp != null} / touch={tTmp != null}）" +
+                                           "→ 已跳过原版这一步，避免 NRE ✓");
+                }
+                return false;
+            }
+
+            return true;   // 正常路径：照原版跑 ✓
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool _resetTextLogged;
+
+    [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Open))]
+    [HarmonyPrefix]
+    public static void DiagnoseOptionsOpen(OptionsMenuBehaviour __instance)
+    {
+        try
+        {
+            var missing = new List<string>();
+            try { if (__instance.JoystickButton == null) missing.Add("JoystickButton"); } catch { missing.Add("JoystickButton(throw)"); }
+            try { if (__instance.TouchButton == null) missing.Add("TouchButton"); } catch { missing.Add("TouchButton(throw)"); }
+            try { if (__instance.JoystickSizeSlider == null) missing.Add("JoystickSizeSlider"); } catch { missing.Add("JoystickSizeSlider(throw)"); }
+            try { if (__instance.SoundSlider == null) missing.Add("SoundSlider"); } catch { missing.Add("SoundSlider(throw)"); }
+            try { if (__instance.MusicSlider == null) missing.Add("MusicSlider"); } catch { missing.Add("MusicSlider(throw)"); }
+            try { if (__instance.CensorChatButton == null) missing.Add("CensorChatButton"); } catch { missing.Add("CensorChatButton(throw)"); }
+            try { if (__instance.Tabs == null) missing.Add("Tabs"); } catch { missing.Add("Tabs(throw)"); }
+            try { if (__instance.MenuButton == null) missing.Add("MenuButton"); } catch { missing.Add("MenuButton(throw)"); }
+
+            if (missing.Count > 0)
+                LightLogger.LogWarning($"[OptionsMenu.Diag] Open() 之前这些字段为 null → {string.Join(", ", missing)}" +
+                                       $"（这基本就是 NRE 的来源 ✓；样式={AppearanceSettings.ButtonStyle}）");
+        }
+        catch { }
+    }
+
+    private static void ApplyMainMenuStyle(MainButtonStyle style)
+    {
+        try
+        {
+            string name = style switch
+            {
+                MainButtonStyle.Vanilla => "原版 + 署名",
+                _ => "MOD 样式",
+            };
+
+            HudUI.OpenConfirmDialog(
+                $"切换到「{name}」样式？\n\n确定后**重新加载主界面**才能生效 ✓",
+                () => CommitMainMenuStyle(style));
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.ApplyMainMenuStyle]", ex);
+        }
+    }
+
+    /// <summary>确认之后：落盘 → 清理静态引用 → 重载主界面场景 ✓</summary>
+    private static void CommitMainMenuStyle(MainButtonStyle style)
+    {
+        try
+        {
+            AppearanceSettings.ButtonStyle = style;
+            try { AppearanceSettings.Save(); }
+            catch (Exception ex) { LightLogger.LogWarning($"[MainMenu] 保存样式失败：{ex.Message}"); }
+
+            LightLogger.Log($"[MainMenu] 主界面样式 → {style}，即将重载 MainMenu 场景");
+            PrepareForSceneReload();
+
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.CommitMainMenuStyle]", ex);
+        }
+    }
+
+    /// <summary>
+    /// 公开入口：切样式后重载主界面 ✓（设置页签里的选择器要调它 ✓，
+    /// 因为那个页面在**大厅设置**里，不在主菜单对象上 ✓）
+    /// </summary>
+    public static void ReloadForStyleChange()
+    {
+        try
+        {
+            PrepareForSceneReload();
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        }
+        catch (Exception ex)
+        {
+            LightLogger.LogError("[MainMenuPatch.ReloadForStyleChange]", ex);
+        }
+    }
+
+    /// <summary>
+    /// 重载场景前把"指向场景对象"的静态字段全部清空 ✓。
+    /// ⚠️ 漏一个就会出现 `MissingReferenceException` 刷屏 ✗（假 null 不是 null ✓）。
+    /// </summary>
+    private static void PrepareForSceneReload()
+    {
+        try { MainMenuStyleLayout.Clear(); } catch { }
+        try { MainMenuButtonStyler.ResetForSceneChange(); } catch { }
+        try { BackgroundPanel.ResetIfSceneChanged(); } catch { }
+
+        _rightPanel = null;
+        _lightScreen = null;
+        _lightSubScreen = null;
+        _bgPanel = null;
+        _bgMoved = false;
+        _bgMoveDelay = 0f;
+        _bgInitialMoveDone = false;
+        _hasBackground = false;
+        _showingPanel = false;
+
+        // ⚠️ 这几个不在本类作用域（弹射菜单的扫描状态 / Release 专用的玩法说明按钮）✗
+        //    → 不清也没问题 ✓：重载后它们指向已销毁对象 ✓，而代码里一律用
+        //      `== null` 判断 ✓（Unity 假 null 会被识别成 null ✓）→ 自然会重新扫描/重新找 ✓。
+
+        _lastTickFrame = -1;
+        _cachedSceneHandle = int.MinValue;
+        _cachedSceneName = "";
+
+        LightLogger.Log("[MainMenu] 已清理静态引用（重载前 ✓）");
+    }
+
     private static void SetupGalleryScreen(MainMenuManager __instance)
     {
         try
         {
+            // ⚠️ 2026-11-03：细分计时（MenuTimer 对照实验已证明这整段占 1558ms ✗，这里再往下切一刀）
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            long m0, m1;
+
             BackgroundStore.EnsureExtracted();
             int count = BackgroundStore.Scan(force: true).Count;
             _hasBackground = count > 0;
+            m0 = sw.ElapsedMilliseconds;
 
             LightLogger.Log($"[Light] 背景素材 {count} 个（Image={BackgroundStore.ImageDir} / " +
                             $"Video={BackgroundStore.VideoDir}）");
@@ -851,12 +1355,23 @@ public static class MainMenuPatch
                 ? __instance.mainMenuUI.layer
                 : __instance.gameObject.layer;
 
+            m1 = sw.ElapsedMilliseconds;
             BackgroundRenderer.OnMainMenuStart(layer);
             BackgroundRenderer.LogDiagnostics();
+            long m2 = sw.ElapsedMilliseconds;
 
             // 主界面按钮样式（MOD / 原版 / 亚克力 + 逐按钮颜色）
             MainMenuButtonStyler.Refresh(__instance);
             MainMenuButtonStyler.Apply(force: true);
+            long m3 = sw.ElapsedMilliseconds;
+
+            // ★ 2026-11-03：三套样式（MOD / 原版+署名 / 美化版）的**布局**部分 ✓
+            //   （贴图/配色由 MainMenuButtonStyler 管 ✓；标题、署名、四个按钮的排列在这里 ✓）
+            MainMenuStyleLayout.Apply(__instance);
+            long m4 = sw.ElapsedMilliseconds;
+
+            LightLogger.Log($"[Light] 画廊阶段耗时：素材扫描 {m0}ms / 面板+相机准备 {m1 - m0}ms / " +
+                            $"背景 {m2 - m1}ms / **按钮贴图+样式 {m3 - m2}ms** / 三态布局 {m4 - m3}ms / 合计 {m4}ms");
         }
         catch (Exception ex)
         {
@@ -1062,6 +1577,28 @@ public static class MainMenuPatch
     /// <summary>上一帧跑过的帧号（"同一帧只跑一次"的守卫）。</summary>
     private static int _lastTickFrame = -1;
 
+    // ⚠️ 2026-11-03 性能优化（用户："进入主界面非常卡"）：
+    //   `LightTicker` 在**所有场景**每帧都调 `TickAll` ✗ → 原来每帧都做
+    //   `SceneManager.GetActiveScene().name` ✗，而 `.name` 每次都**新建一个 string** ✗
+    //   （每秒 60 次 GC 垃圾 ✓）。改成按 **scene.handle** 缓存 ✓：只有真换场景才取名字 ✓。
+    private static int _cachedSceneHandle = int.MinValue;
+    private static string _cachedSceneName = "";
+
+    private static string SafeActiveSceneNameCached()
+    {
+        try
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            if (scene.handle != _cachedSceneHandle)
+            {
+                _cachedSceneHandle = scene.handle;
+                _cachedSceneName = scene.name;
+            }
+            return _cachedSceneName;
+        }
+        catch { return ""; }
+    }
+
     // =====================================================================
     //  诊断（2026-10-05 用户报「本地 / 搜索游戏没有背景图」时加的）
     //  ⚠️ 目的：让用户跑一次就能从 LightLog.log 看出
@@ -1114,7 +1651,8 @@ public static class MainMenuPatch
     /// <summary>当前场景名（读不到就返回 "?"，绝不抛）。</summary>
     private static string SafeActiveSceneName()
     {
-        try { return UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; }
+        // ⚠️ 2026-11-03：改走缓存版（原来每帧 `.name` 都新建 string ✗，见 SafeActiveSceneNameCached 的说明）
+        try { return SafeActiveSceneNameCached(); }
         catch { return "?"; }
     }
 
@@ -1134,7 +1672,7 @@ public static class MainMenuPatch
 
         try
         {
-            var sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            var sceneName = SafeActiveSceneNameCached();
             // ⚠️ 这三个场景是"主界面家族"：MainMenu（主菜单）、MatchMaking（本地/连线区选择）、
             //    FindAGame（搜索游戏）。**背景图在这三个里都要显示**（用户要求），
             //    而且音频要连续 —— 见 BackgroundRenderer.IsInMenuScene() 的注释。
@@ -1207,7 +1745,20 @@ public static class MainMenuPatch
                     _rightPanel.transform.localPosition = lerp;
             }
 
-            if (!_bgMoved)
+            // ★ 2026-11-03 用户："原版情况下这个背景不该划出去" ✓
+            //   → 「原版」样式下**不许再挪原版背景**（那段上移逻辑只属于 MOD / 美化版的观感 ✓）
+            // ★ 2026-11-03 用户："LightScreen 你没关 logo" ✓
+            //   每帧根据 LightScreen / 子屏是否可见来开关装饰 ✓（覆盖所有打开/关闭路径 ✓，不用到处埋调用 ✓）
+            try
+            {
+                bool screenOpen = (_lightScreen != null && _lightScreen.activeSelf)
+                               || (_lightSubScreen != null && _lightSubScreen.activeSelf)
+                               || (_bgPanel != null && _bgPanel.IsShown);
+                MainMenuStyleLayout.SetDecorVisible(!screenOpen);
+            }
+            catch { }
+
+            if (!_bgMoved && AppearanceSettings.ButtonStyle != MainButtonStyle.Vanilla)
             {
                 var bg = FindGO("BackgroundTexture");
                 if (bg != null && bg.activeSelf)

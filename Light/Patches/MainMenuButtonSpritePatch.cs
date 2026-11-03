@@ -252,23 +252,56 @@ public static class MainMenuButtonSpritePatch
 
     #endregion
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  【2026-11-03 性能修复】贴图缓存 —— 用户实测：进主界面卡 1.6 秒 ✗
+    //  用 MenuTimer 单独插件对照测出来的差距（关 LID = 只有 1 帧 150ms ✓），
+    //  分段计时定位到 `Light屏/画廊 = 1558ms` ✓ → 再往下就是这里：
+    //
+    //  原来每进一次主菜单，`ReplaceButton` 都会对每个按钮：
+    //    ① `ResourceHelper.LoadTexture()` —— **重新解码 PNG** ✗
+    //    ② `FindOpaqueBounds()` —— **逐像素**扫整张图找非透明边界 ✗✗
+    //  13 个按钮 × 多套状态图 × 逐像素 = 1.5 秒级 ✓✓
+    //
+    //  ★ 这两步**只跟文件路径有关** ✓ → 缓存起来：第一次算，之后直接复用 ✓
+    //  ⚠️ `Texture2D` 是 Unity 对象 → 必须打 `DontUnloadUnusedAsset` ✓
+    //     否则切场景被卸载 → 缓存里是个"假 null" ✗（AGENTS §4.6）
+    // ═══════════════════════════════════════════════════════════════════
+    private static readonly Dictionary<string, (Texture2D? Tex, int X, int Y, int W, int H)> _texCache = new();
+
     private static void ReplaceButton(PassiveButton btn, string relativePath,
         bool fitInside = false, float scale = 1f, bool hideExtraRenderers = false)
     {
-        var texture = ResourceHelper.LoadTexture(relativePath);
-        if (texture == null)
-        {
-            LightLogger.LogWarning($"[MainMenuButtonSprite] 加载纹理失败 {relativePath}");
-            return;
-        }
+        Texture2D? texture;
+        int minX, minY, width, height;
 
-        if (!FindOpaqueBounds(texture, AlphaThreshold, out int minX, out int minY, out int width, out int height))
+        // 缓存命中（`== null` 能识别 Unity 假 null ✓，不要用 `??` ✗）
+        if (_texCache.TryGetValue(relativePath, out var info) && info.Tex != null)
         {
-            LightLogger.LogWarning($"[MainMenuButtonSprite] 未检测到非透明区域，使用整图 {relativePath}");
-            minX = 0;
-            minY = 0;
-            width = texture.width;
-            height = texture.height;
+            texture = info.Tex;
+            minX = info.X; minY = info.Y; width = info.W; height = info.H;
+        }
+        else
+        {
+            texture = ResourceHelper.LoadTexture(relativePath);
+            if (texture == null)
+            {
+                LightLogger.LogWarning($"[MainMenuButtonSprite] 加载纹理失败 {relativePath}");
+                return;
+            }
+
+            if (!FindOpaqueBounds(texture, AlphaThreshold, out minX, out minY, out width, out height))
+            {
+                LightLogger.LogWarning($"[MainMenuButtonSprite] 未检测到非透明区域，使用整图 {relativePath}");
+                minX = 0;
+                minY = 0;
+                width = texture.width;
+                height = texture.height;
+            }
+
+            try { texture.hideFlags = HideFlags.DontUnloadUnusedAsset; } catch { }
+            _texCache[relativePath] = (texture, minX, minY, width, height);
+            LightLogger.Log($"[MainMenuButtonSprite] 首次解码并缓存 {relativePath}（{texture.width}x{texture.height}），" +
+                            $"之后进主菜单直接复用 ✓");
         }
 
         // ── 找"主渲染器" ────────────────────────────────────────────────

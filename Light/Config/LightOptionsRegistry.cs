@@ -64,6 +64,10 @@ internal class LightOptionsRegistry
             }, "不显示任何人的装扮"
             );
         _reloadConfig = SettingsTabPatch.AddActionButton("重载配置",()=>{ LightSettings.ReloadConfig(); },"手动重载配置");
+
+        // ⚠️ 2026-11-03 用户："把 options 里面的那个主界面样式删掉" ✓
+        //   → 样式入口**只保留主菜单 LightScreen 里那一个** ✓（这里不再有 ✓）
+
         _showTaskPanelInMeeting = SettingsTabPatch.AddToggleButton("在会议中显示任务面板",s.ShowTaskPanelInMeeting, 
             on => 
             { 

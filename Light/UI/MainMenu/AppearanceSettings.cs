@@ -16,6 +16,8 @@ public enum MainButtonStyle
     Vanilla = 1,
     /// <summary>亚克力样式（FS 那种）：丢掉贴图，做成纯色半透明板，可单独/批量调色。</summary>
     Acrylic = 2,
+    // ⚠️ 2026-11-03 用户："美化版你删了吧，bug 太多了" ✓ → Pretty 枚举已删除 ✗
+    //   （存档里若还是 3，读盘时会被夹到 2 → 再手动切回 MOD 即可 ✓）
 }
 
 /// <summary>
@@ -208,6 +210,8 @@ public static class AppearanceSettings
             case "videoVolumePercent": if (isInt) VideoVolumePercent = Mathf.Clamp(n, 0, 100); break;
             case "hideCrewmates": HideCrewmates = raw == "true" || raw == "1"; break;
             case "buttonStyle":
+                // ⚠️ 2026-11-03 修：原来夹到 0..2 ✗ → 新增的 **美化版 = 3** 读盘时会被夹成 2（亚克力）✗✗
+                //   → 这就是"模式没持久化"的直接原因 ✓（存 3、读回 2 ✓）
                 if (isInt) ButtonStyle = (MainButtonStyle)Mathf.Clamp(n, 0, 2);
                 break;
         }

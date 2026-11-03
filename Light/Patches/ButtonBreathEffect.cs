@@ -185,10 +185,18 @@ public static class ButtonBreathEffect
         catch { return false; }
     }
 
+    /// <summary>
+    /// **总开关**（2026-11-03 用户："美化版不要呼吸灯和点击反馈（这些只应该在 MOD 样式有）" ✓）
+    /// → MOD 样式 = true ✓；原版 / 美化版 = false ✓（`MainMenuStyleLayout` 负责设 ✓）
+    /// </summary>
+    public static bool Disabled { get; set; }
+
     public static void Update()
     {
         try
         {
+            if (Disabled) return;   // ★ 非 MOD 样式：呼吸灯 / 悬停 / 点击反馈全部关闭 ✓
+
             if (GameObject.Find("MainUI") == null) return;
 
             // 创建房间界面（MainUI-CreateGameScreen）显示时，去掉呼吸灯/点击按压/悬停反馈，避免与房间创建面板错位

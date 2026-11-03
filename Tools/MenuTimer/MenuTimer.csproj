@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <DebugType>embedded</DebugType>
+        <AssemblyName>MenuTimer</AssemblyName>
+        <RootNamespace>MenuTimer</RootNamespace>
+        <Version>0.1.0</Version>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <Target Name="AddGameReferences" BeforeTargets="ResolveAssemblyReferences">
+        <ItemGroup>
+            <_LibDlls Include="..\..\Libs\*.dll" Exclude="..\..\Libs\netstandard.dll" />
+            <Reference Include="@(_LibDlls->'%(FileName)')">
+                <HintPath>%(FullPath)</HintPath>
+                <Private>false</Private>
+            </Reference>
+        </ItemGroup>
+    </Target>
+
+    <Target Name="CustomCopyToOutput" AfterTargets="Build">
+        <PropertyGroup>
+            <CustomOutDir>$(ProjectDir)..\..\Output\</CustomOutDir>
+        </PropertyGroup>
+        <MakeDir Directories="$(CustomOutDir)" Condition="!Exists('$(CustomOutDir)')" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(CustomOutDir)" />
+        <Message Importance="high" Text="[Output] MenuTimer.dll → $(CustomOutDir)" />
+    </Target>
+</Project>

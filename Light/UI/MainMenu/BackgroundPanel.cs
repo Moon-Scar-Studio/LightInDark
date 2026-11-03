@@ -623,16 +623,11 @@ public class BackgroundPanel
             new Vector3(cx + 1.00f, -1.88f, -0.1f), 2.30f,
             Mathf.Clamp01(_draftVideoVolume / 100f), OnVolumeSliderChanged);
 
-        // ---- 按钮样式 / 按钮颜色 ----
-        // 点「按钮样式」循环切换 MOD → 原版 → 亚克力。
-        // 「按钮颜色」只在**亚克力样式**下才出现（用户要求：选这个才有一个按钮，
-        //   点开是第二个窗口，改主界面每个按钮的颜色）。
-        _styleButton = MakeButton(root, "ButtonStyle", BtnStyleLabel(), new Vector2(2.6f, 0.42f),
-            new Vector3(cx - 0.85f, -2.34f, -0.1f), CycleButtonStyle, false, fontSize: 1.25f);
-
-        _colorButton = MakeButton(root, "ButtonColor", "按钮颜色…", new Vector2(1.5f, 0.42f),
-            new Vector3(cx + 1.35f, -2.34f, -0.1f), OpenColorPanel, false, fontSize: 1.2f);
-        if (_colorButton != null) _colorButton.SetActive(false);   // 默认 MOD 样式 → 先藏起来
+        // ---- 按钮颜色 ----
+        // ⚠️ 2026-11-03 用户："更换背景图中『按钮样式』删掉" ✓
+        //   → 「按钮样式」按钮不再创建 ✓（主界面样式的入口统一在主菜单 LightScreen ✓）
+        //   ⚠️ 2026-11-03：亚克力样式已**完全停用** ✓ → 「按钮颜色」也一并删除 ✓
+        _colorButton = null;
     }
 
     private string BtnStyleLabel() => _draftStyle switch

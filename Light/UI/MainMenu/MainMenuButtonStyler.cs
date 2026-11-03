@@ -312,7 +312,12 @@ internal static class MainMenuButtonStyler
         {
             var btn = e.Btn;
 
-            if (style == MainButtonStyle.Acrylic)
+            // ★★ 2026-11-03 用户："为什么美化版鼠标放按钮上按钮整体变成黑色？…你给完全清除一下"
+            //   → **亚克力染色整段停用** ✓（代码留着做参考，但不执行 ✓）
+            //   原因：它把 `activeSprites` 直接写成 (r,g,b,1)，
+            //   而悬浮时原版 `ButtonRolloverHandler` 还会再改一次颜色 →
+            //   两者叠加就"黑一下" ✓✓（正是用户看到的现象 ✓）
+            if (false && style == MainButtonStyle.Acrylic)
             {
                 // ⚠️⚠️ 照抄 FS（FinalSuspect/Patches/System/MainMenuManagerPatch.cs:129-130）：
                 //      **只动 inactiveSprites / activeSprites 这两张，而且只改颜色不改贴图** ——
