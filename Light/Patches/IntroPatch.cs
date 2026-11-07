@@ -1,20 +1,21 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
 using LightInDark.Audio;
+using LightInDark.Configuration;
 using LightInDark.Core;
+using LightInDark.Roles;
 using UnityEngine;
 using LightGameManager = LightInDark.Game.GameManager;
 
 namespace Light.Patches;
 
 /// <summary>
-/// 开局播报：替换职业开场白文本 + 替换原版职业开场音效。
-///
-/// ⚠️⚠️ 文本覆盖走 <see cref="IntroRoleTextDriver"/>（LateUpdate），**不是**只靠协程 ——
-///   用户报的"有一帧还是原版职业"就是这么来的，根因见驱动器的注释。
+/// 开局播报：替换职业名 / 开场白 / 阵营标题，替换开场音效，并启动开场演出。
+/// 文本覆盖由 <see cref="IntroRoleTextDriver"/> 在 LateUpdate 每帧兜底。
 /// </summary>
 [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.CoBegin))]
 public static class IntroPatch
@@ -28,7 +29,7 @@ public static class IntroPatch
         {
             Current = __instance;
 
-            // ★ 关键：挂一个 LateUpdate 驱动器 —— 保证"原版写完、渲染之前"再覆盖一次（详见驱动器注释）
+            // ★ 关键：挂一个 LateUpdate 驱动器 —— 保证"原版写完、渲染之前"再覆盖一次
             if (__instance != null && __instance.gameObject != null
                 && __instance.gameObject.GetComponent<IntroRoleTextDriver>() == null)
                 __instance.gameObject.AddComponent<IntroRoleTextDriver>();
@@ -51,24 +52,23 @@ public static class IntroPatch
             var role = LightGameManager.Instance?.LocalPlayer?.Role;
             if (role == null) return;
 
-            // ── 1. 职业名：替换原版职业名（原版显示的是底色职业名，如"内鬼"）──
+            ApplyTeamTitle(role);
+
+            // 职业名：值相同就不写，TMP 每次赋值会触发重排，也会打断打字机效果
             if (inst.RoleText != null)
             {
-                inst.RoleText.text = role.Name;
+                if (inst.RoleText.text != role.Name) inst.RoleText.text = role.Name;
                 inst.RoleText.color = LightInDark.ColorHelper.ToUnityColor(role.Color);
             }
 
-            // ── 2. 开场白文本：非空则替换（空则保持原版文案）──
+            // 开场白：为空时保留原版文案
             if (inst.RoleBlurbText != null && !string.IsNullOrEmpty(role.IntroText))
             {
-                inst.RoleBlurbText.text = role.IntroText;
+                if (inst.RoleBlurbText.text != role.IntroText) inst.RoleBlurbText.text = role.IntroText;
                 inst.RoleBlurbText.color = LightInDark.ColorHelper.ToUnityColor(role.Color);
             }
 
-            // ── 3. "你的职业是"那行也染成职业色（用户 2026-10-06 要求）──
-            //    原版 `IntroCutscene` 里 `YouAreText` 用的是**原版职业的颜色**（我们自己没改过它 ✗）
-            //    → 底层的底色职业是船员时永远是白字，和我们上面写的职业名颜色对不上 ✗
-            //    这里一起染成同一个颜色，画面才统一 ✓
+            // "你的职业是"那行也染职业色，否则与上方职业名颜色不一致
             if (inst.YouAreText != null)
                 inst.YouAreText.color = LightInDark.ColorHelper.ToUnityColor(role.Color);
         }
@@ -78,25 +78,62 @@ public static class IntroPatch
         }
     }
 
+    /// <summary>
+    /// 团队揭示阶段的阵营标题：中立职业显示「中立」+ 职业色，并把背景横幅一起染色。
+    /// 中立的底层职业已被校正为船员，不覆盖会显示成「船员」。
+    /// </summary>
+    internal static void ApplyTeamTitle(RuntimeRoleTemplate role)
+    {
+        try
+        {
+            var inst = Current;
+            if (inst == null || inst.TeamTitle == null) return;
+            if (role.RoleCategory != RoleCategory.Neutral) return;
+
+            var color = LightInDark.ColorHelper.ToUnityColor(role.Color);
+
+            inst.TeamTitle.text = LightInDark.Language.Language.Translate("role.category.neutral", "中立");
+            inst.TeamTitle.color = color;
+
+            // 背景横幅也染阵营色（原版船员=青 / 内鬼=红；NOS CoShowTeam :96 同款）
+            try
+            {
+                if (inst.BackgroundBar != null && inst.BackgroundBar.material != null)
+                    inst.BackgroundBar.material.SetColor("_Color", color);
+            }
+            catch { }
+        }
+        catch { }
+    }
+
     private static IEnumerator CoOverrideIntro(IntroCutscene __instance)
     {
-        // 等待角色揭示画面出现（YouAreText 激活），带超时保护防止死等
+        // 等待两件事：角色揭示画面出现 + 本地职业已下发。
+        // 职业由房主 RPC 下发，可能晚于开场动画，先等再播演出。
+        LightInDark.Roles.RuntimeRoleTemplate role = null;
         float wait = 0f;
-        while (__instance != null
-            && (__instance.YouAreText == null || !__instance.YouAreText.gameObject.activeSelf)
-            && wait < 15f)
+        while (wait < 15f)
         {
+            if (__instance == null) yield break;
+
+            bool textReady = __instance.YouAreText != null && __instance.YouAreText.gameObject.activeSelf;
+            role = LightGameManager.Instance?.LocalPlayer?.Role;
+            if (textReady && role != null) break;
+
             wait += Time.deltaTime;
             yield return null;
         }
 
+        if (__instance == null) yield break;
+        if (role == null)
+        {
+            LightLogger.LogWarning("[IntroPatch] 开场等待 15 秒仍未拿到本地职业，跳过演出");
+            yield break;
+        }
+
+        // C# 迭代器限制：try 块含 catch 时不能 yield return —— 演出调用放在 try 外
         try
         {
-            if (__instance == null) yield break;
-
-            var role = LightGameManager.Instance?.LocalPlayer?.Role;
-            if (role == null) yield break;
-
             // 文本本身由 LateUpdate 驱动器每帧兜住（这里只是立刻做一次，缩短空窗）
             ApplyRoleText();
 
@@ -123,6 +160,40 @@ public static class IntroPatch
         {
             LightLogger.LogWarning($"[IntroPatch] 开场播报异常: {ex.Message}");
         }
+
+        if (role == null || __instance == null) yield break;
+
+        // 开场演出已停用（保留实现，需要时取消注释即可恢复）
+        // if (IntroRoleTextDriver.RevealStarted) yield break;
+        // IntroRoleTextDriver.RevealStarted = true;
+        // yield return IntroCinematics.PlayRoleReveal(__instance, role);
+    }
+}
+
+/// <summary>
+/// 中立职业的团队名单只显示自己（NOS `TeamRevealType.OnlyMe` 风格）。
+/// 原版按底层职业调 BeginCrewmate（中立底层已被校正为 Crewmate），
+/// 默认会把**全部船员**列出来 —— 中立没有队友，只列自己 ✓
+/// </summary>
+[HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.BeginCrewmate))]
+public static class NeutralIntroTeamPatch
+{
+    public static void Prefix(List<PlayerControl> teamToDisplay)
+    {
+        try
+        {
+            if (teamToDisplay == null) return;
+
+            var role = LightGameManager.Instance?.LocalPlayer?.Role;
+            if (role == null || role.RoleCategory != RoleCategory.Neutral) return;
+
+            var me = PlayerControl.LocalPlayer;
+            if (me == null) return;
+
+            teamToDisplay.Clear();
+            teamToDisplay.Add(me);
+        }
+        catch { }
     }
 }
 
@@ -160,6 +231,12 @@ public class IntroRoleTextDriver : MonoBehaviour
         catch (Exception ex) { LightLogger.LogWarning($"[IntroRoleTextDriver] 注册失败: {ex.Message}"); }
     }
 
+    /// <summary>本局扫光是否已播（团队阶段只播一次）。</summary>
+    internal static bool SweepPlayed;
+
+    /// <summary>本局角色演出是否已启动（只播一次）。</summary>
+    internal static bool RevealStarted;
+
     private void LateUpdate()
     {
         try
@@ -167,11 +244,44 @@ public class IntroRoleTextDriver : MonoBehaviour
             var inst = IntroPatch.Current;
             if (inst == null) return;
 
+            // 团队揭示阶段（角色名还没出现）：中立阵营标题覆盖
+            if (inst.TeamTitle != null && inst.TeamTitle.gameObject.activeInHierarchy)
+            {
+                var teamRole = LightGameManager.Instance?.LocalPlayer?.Role;
+                if (teamRole != null) IntroPatch.ApplyTeamTitle(teamRole);
+
+                // 开场演出已停用（扫光）
+                // if (!SweepPlayed)
+                // {
+                //     SweepPlayed = true;
+                //     inst.StartCoroutine(IntroCinematics.PlayTeamSweep(inst).WrapToIl2Cpp());
+                // }
+            }
+
             // 只在"角色揭示画面显示期间"覆盖（原版 SetActive(false) 之后就别碰了）
             if (inst.RoleText == null || !inst.RoleText.gameObject.activeSelf) return;
 
             IntroPatch.ApplyRoleText();
+
+            // 开场演出已停用（角色揭示演出）
+            // if (!RevealStarted)
+            // {
+            //     var role = LightGameManager.Instance?.LocalPlayer?.Role;
+            //     if (role != null)
+            //     {
+            //         RevealStarted = true;
+            //         inst.StartCoroutine(IntroCinematics.PlayRoleReveal(inst, role).WrapToIl2Cpp());
+            //     }
+            // }
         }
         catch { }
+    }
+
+    private void OnDestroy()
+    {
+        // 开场演出已停用；恢复演出时需一并取消注释（用于强制恢复 timeScale 与清理临时对象）
+        // try { IntroCinematics.CleanupAll(); } catch { }
+        SweepPlayed = false;
+        RevealStarted = false;
     }
 }

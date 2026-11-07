@@ -106,7 +106,7 @@ public static class BuffDebugPanel
             window.AddButton("加速 ×1.3（10 秒）", () => Apply(SpeedBoostBuff.MyBuff), new Vector2(3.8f, 0.5f), null);
             window.AddButton("视野 ×1.5（10 秒）", () => Apply(new ViewDistanceBuff(1.5f, 10f)), new Vector2(3.8f, 0.5f), null);
             window.AddButton("缩小 ×0.6（10 秒）", () => Apply(new ScaleBuff(0.6f, 10f)), new Vector2(3.8f, 0.5f), null);
-            window.AddButton("小黑人（全场 15 秒）", () => Apply(ShadowBuff.MyBuff), new Vector2(3.8f, 0.5f), null);
+            window.AddButton("个人小黑人（15 秒）", () => Apply(ShadowBuff.MyBuff), new Vector2(3.8f, 0.5f), null);
 
             bool anonymous = PlayerAppearance.IsGlobalAnonymous;
             window.AddButton(anonymous ? "小黑人（全场整局）：关" : "小黑人（全场整局）：开",
@@ -142,7 +142,8 @@ public static class BuffDebugPanel
         var me = Player.LocalPlayer;
         if (me == null) return;
 
-        BuffManager.Add(me, definition);
+        // 走带同步的入口：房主加 Buff 时会广播给其他客户端
+        BuffManager.AddAndBroadcast(me, definition);
         Refresh();
     }
 
@@ -157,7 +158,7 @@ public static class BuffDebugPanel
         var me = Player.LocalPlayer;
         if (me == null) return;
 
-        BuffManager.RemoveAll(me);
+        BuffSync.RemoveAll(me);
         PlayerAppearance.SetAnonymousAll(false);
         Refresh();
     }
