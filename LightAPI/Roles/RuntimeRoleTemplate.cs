@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AmongUs.GameOptions;
 using LightInDark.Configuration;
 using LightInDark.Core;
 using LightInDark.Events;
@@ -104,6 +105,8 @@ namespace LightInDark.Roles
             {
                 IsActive = true;
                 EventSystem.RegisterInstance(this);
+                try { SyncVanillaRole(); }
+                catch (Exception ex) { LightLogger.LogWarning($"[RuntimeRole] {CodeName} 校正底层职业失败: {ex.Message}"); }
                 try { OnActivated(); }
                 catch (Exception ex) { LightLogger.LogWarning($"[RuntimeRole] {CodeName} OnActivated 失败: {ex.Message}"); }
                 try { UpdateNameDisplay(); }
@@ -130,6 +133,29 @@ namespace LightInDark.Roles
             {
                 LightLogger.LogError("RuntimeRoleTemplate.Inactivate", ex);
             }
+        }
+
+        /// <summary>本职业是否自己创建了击杀按钮（由 <see cref="UI.Ability.AbilityButtonFactory.CreateKill"/> 置位）。</summary>
+        public bool HasOwnKillButton { get; private set; }
+
+        internal void MarkOwnKillButton() => HasOwnKillButton = true;
+
+        /// <summary>
+        /// 按职业阵营把底层原版职业校正到 Crewmate / Impostor（不一致时才写）。
+        /// 中立与船员必须是 Crewmate，否则会被原版当成内鬼（内鬼互认、内鬼击杀按钮、内鬼胜判定）。
+        /// </summary>
+        private void SyncVanillaRole()
+        {
+            if (Role.IsGhostRole) return;
+
+            var control = MyPlayer?.Control;
+            if (control == null) return;
+            if (control.Data == null || control.Data.Role == null) return;
+
+            bool wantImpostor = Role.RoleCategory == LightInDark.Configuration.RoleCategory.Impostor;
+            if (control.Data.Role.IsImpostor == wantImpostor) return;
+
+            RoleManager.Instance.SetRole(control, wantImpostor ? RoleTypes.Impostor : RoleTypes.Crewmate);
         }
 
         /// <summary>子类覆写：激活后挂按钮/执行技能。</summary>

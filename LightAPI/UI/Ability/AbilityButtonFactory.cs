@@ -178,7 +178,7 @@ namespace LightInDark.UI.Ability
                 p => !RoleTeam.IsTeammate(owner, p) && (extraFilter?.Invoke(p) ?? true));
             RoleButtonManager.RegisterTracker(tracker);
 
-            return AbilityButton.Create(role, new RoleButtonConfig { IsKillButton = true }
+            var button = AbilityButton.Create(role, new RoleButtonConfig { IsKillButton = true }
                 .SetArrangedAsKillButton(true)
                 .SetLabelType(ButtonLabelType.Impostor)
                 .SetHotkey(hotkey)
@@ -196,6 +196,10 @@ namespace LightInDark.UI.Ability
                         role.Role.KillDeathCauseId);
                     onKill?.Invoke(target);
                 });
+
+            // 标记"本职业自带击杀按钮"：原版 KillButton 必须被压制，否则会出现两个击杀按钮
+            if (button != null) role.MarkOwnKillButton();
+            return button;
         }
 
         /// <summary>

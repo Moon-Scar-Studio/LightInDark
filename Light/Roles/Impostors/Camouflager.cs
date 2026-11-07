@@ -65,7 +65,8 @@ public class Camouflager : RoleTemplate
             "Camouflage",
             (msg, _) =>
             {
-                PlayerAppearance.SetAnonymousAll(msg.on);
+                // 广播已由 RpcCamo 负责，这里只落地，避免每个接收端再广播一次
+                PlayerAppearance.SetAnonymousAll(msg.on, broadcast: false);
             }
         );
     }

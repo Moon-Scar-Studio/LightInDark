@@ -174,9 +174,12 @@ namespace LightInDark.RPCs
 
                 LightLogger.Log($"[LidRPC] 扫描完成，共 {_entries.Count} 个 RPC");
 
-                // ★ 2026-10-25：Buff 的定向同步 RPC（不走 LidRPC 的"全广播"，见 BuffSync 的注释 ✓）
-                //    每个客户端都会跑到这里（Light\LightPlugin.cs:90 / LightAPI\LIDPlugin.cs:44）✓
+                // Buff 的定向同步 RPC（不走 LidRPC 的"全广播"，见 BuffSync 的注释）
+                // 每个客户端都会跑到这里（Light\LightPlugin.cs:90 / LightAPI\LIDPlugin.cs:44）
                 Modifiers.Buffs.BuffSync.EnsureRegistered();
+
+                // 小黑人（匿名外观）的全场 / 单人同步 RPC，同样需要每个客户端都注册
+                Visual.PlayerAppearance.EnsureRegistered();
             }
             catch (Exception ex)
             {

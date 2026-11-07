@@ -202,19 +202,63 @@ namespace Light.Patches
 
             // ── 3. 随机挑内鬼（原版也是随机）──
             //    ★ 用户 2026-10-06 要求：**假人一律当船员、不参与内鬼抽签** ✓
+            //    ★ 预定保护：预定了非内鬼阵营职业（豺狼 / 警长等）的人不能被抽成内鬼，
+            //      否则预定失效、底层 IsImpostor 变 true → 中立玩家会同时拿到内鬼击杀按钮
             var order = players.OrderBy(_ => Rng.Next()).ToList();
             var impostors = new HashSet<byte>();
             int dummyCount = 0;
+
+            var pinnedImpostor = new List<PlayerControl>();
+            var free = new List<PlayerControl>();
+            var pinnedOther = new List<PlayerControl>();
+
             foreach (var pc in order)
             {
-                if (impostors.Count >= wanted) break;
                 bool dummy = false;
                 try { dummy = pc.isDummy; } catch { }
                 if (dummy) { dummyCount++; continue; }     // ★ 假人不当内鬼 ✓
+
+                RoleTemplate pinned = null;
+                try
+                {
+                    if (LightInDark.Roles.Assignment.RolePinManager.TryGetPin(pc.PlayerId, out var p)) pinned = p;
+                }
+                catch { }
+
+                if (pinned == null) free.Add(pc);
+                else if (pinned.RoleCategory == LightInDark.Configuration.RoleCategory.Impostor) pinnedImpostor.Add(pc);
+                else pinnedOther.Add(pc);
+            }
+
+            // 预定了内鬼职业的优先，其余随机序补足
+            foreach (var pc in pinnedImpostor)
+            {
+                if (impostors.Count >= wanted) break;
                 impostors.Add(pc.PlayerId);
             }
+            foreach (var pc in free)
+            {
+                if (impostors.Count >= wanted) break;
+                impostors.Add(pc.PlayerId);
+            }
+
+            // 极端情况：能抽的人不够（大量预定非内鬼职业），仍要凑够内鬼数 → 只能从这里面补
+            if (impostors.Count < wanted && pinnedOther.Count > 0)
+            {
+                int need = wanted - impostors.Count;
+                LightLogger.LogWarning($"[Patch] 可抽内鬼的人不够（{impostors.Count}/{wanted}），" +
+                                       $"从预定了非内鬼职业的 {pinnedOther.Count} 人里补 {Math.Min(need, pinnedOther.Count)} 人");
+                foreach (var pc in pinnedOther)
+                {
+                    if (impostors.Count >= wanted) break;
+                    impostors.Add(pc.PlayerId);
+                }
+            }
+
             if (dummyCount > 0)
                 LightLogger.Log($"[Patch] 假人 {dummyCount} 个 → 一律按**船员**处理（不参与内鬼抽签）✓");
+            if (pinnedOther.Count > 0)
+                LightLogger.Log($"[Patch] 预定保护：{pinnedOther.Count} 人预定了非内鬼职业 → 优先不当内鬼");
 
             // ── 4. 落地：先同步写本地，再广播 ──
             int imp = 0, crew = 0;

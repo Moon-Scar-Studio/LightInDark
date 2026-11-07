@@ -123,7 +123,8 @@ public class StandardRoleAllocator : IRoleAllocator
                 foreach (var cat in new[] { RoleCategory.Impostor, RoleCategory.Neutral, RoleCategory.Crewmate })
                 {
                     foreach (var (pid, role) in table.GetPlayers(cat))
-                        sb.Append(' ').Append(NameOf(pid)).Append('=').Append(role.Name).Append('(').Append(role.CodeName).Append(')');
+                        sb.Append(' ').Append(NameOf(pid)).Append('=').Append(role.Name).Append('(').Append(role.CodeName).Append(')')
+                          .Append("~底层=").Append(Underlying(pid));
                 }
                 LightLogger.Log(sb.ToString());
             }
@@ -152,6 +153,23 @@ public class StandardRoleAllocator : IRoleAllocator
         }
         catch { }
         return playerId.ToString();
+    }
+
+    /// <summary>底层原版职业（用于确认"中立是否被当成内鬼"）。</summary>
+    private static string Underlying(byte playerId)
+    {
+        try
+        {
+            foreach (var pc in PlayerControl.AllPlayerControls)
+            {
+                if (pc == null || pc.PlayerId != playerId) continue;
+                var data = pc.Data;
+                if (data == null || data.Role == null) return "?";
+                return data.Role.IsImpostor ? "Impostor" : "Crewmate";
+            }
+        }
+        catch { }
+        return "?";
     }
 
     /// <summary>
