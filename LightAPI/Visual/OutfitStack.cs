@@ -198,6 +198,8 @@ namespace LightInDark.Visual
 
             try
             {
+                var cosmetics = control.cosmetics;
+                if (cosmetics != null) cosmetics.nameTextContainer.SetActive(true);
                 control.SetName(def.PlayerName);
                 control.SetColor(def.ColorId);
                 control.SetHat(def.HatId, def.ColorId);
@@ -211,6 +213,24 @@ namespace LightInDark.Visual
             }
         }
 
+        /// <summary>
+        /// 每个「玩家 + 标签」只打印一次应用内容，用于排查"效果没生效"是没调用还是调用了没反应。
+        /// </summary>
+        private static void LogAppliedOnce(PlayerControl control, OutfitLayer layer, int color)
+        {
+            try
+            {
+                string key = control.PlayerId + "|" + layer.Tag;
+                if (!_logged.Add(key)) return;
+                LightLogger.Log($"[OutfitStack] 应用 {control.PlayerId}/{layer.Tag} " +
+                                $"name={(layer.Name == null ? "null" : layer.Name.Length == 0 ? "<隐藏>" : layer.Name)} " +
+                                $"color={color} hat={layer.HatId} skin={layer.SkinId} visor={layer.VisorId} pet={layer.PetId}");
+            }
+            catch { }
+        }
+
+        private static readonly HashSet<string> _logged = new();
+
         /// <summary>应用一层（只改有值的项 ✓）</summary>
         private static void ApplyLayer(PlayerControl control, OutfitLayer layer)
         {
@@ -219,9 +239,19 @@ namespace LightInDark.Visual
             int color = layer.ColorId >= 0 ? layer.ColorId
                       : (control.Data?.DefaultOutfit?.ColorId ?? 0);
 
+            LogAppliedOnce(control, layer, color);
+
             try
             {
-                if (layer.Name != null) control.SetName(layer.Name);
+                // 名字：原版每帧会把 nameText 重置成 Data.PlayerName，
+                // 只 SetName("") 会被立刻覆盖，必须直接隐藏名字容器
+                var cosmetics = control.cosmetics;
+                if (layer.Name != null)
+                {
+                    bool hide = layer.Name.Length == 0;
+                    if (cosmetics != null) cosmetics.nameTextContainer.SetActive(!hide);
+                    if (!hide) control.SetName(layer.Name);
+                }
                 if (layer.ColorId >= 0) control.SetColor(layer.ColorId);
                 if (layer.HatId != null) control.SetHat(layer.HatId, color);
                 if (layer.SkinId != null) control.SetSkin(layer.SkinId, color);

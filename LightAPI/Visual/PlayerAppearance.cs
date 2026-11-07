@@ -53,7 +53,11 @@ namespace LightInDark.Visual
             return OutfitStack.Has(control, GlobalTag) || OutfitStack.Has(control, SingleTag);
         }
 
-        /// <summary>构造一层匿名外观（无帽 / 无皮肤 / 无面罩 / 无宠物 + 深灰身体 + 空名字）。</summary>
+        /// <summary>
+        /// 构造一层匿名外观（无帽 / 无皮肤 / 无面罩 / 无宠物 + 深灰身体 + 空名字）。
+        /// 空装扮 ID 用字面量：`CosmeticsLayer.EMPTY_*` 是 C# const，编译期内联，
+        /// IL2CPP 元数据里没有这些字段，运行时访问会抛异常。
+        /// </summary>
         public static OutfitLayer CreateAnonymousLayer(string tag, int priority = AnonymousPriority)
             => new()
             {
@@ -61,26 +65,28 @@ namespace LightInDark.Visual
                 Priority = priority,
                 Name = "",
                 ColorId = AnonymousColorId,
-                HatId = CosmeticsLayer.EMPTY_HAT_ID,
-                SkinId = CosmeticsLayer.EMPTY_SKIN_ID,
-                VisorId = CosmeticsLayer.EMPTY_VISOR_ID,
-                PetId = CosmeticsLayer.EMPTY_PET_ID,
+                HatId = "hat_NoHat",
+                SkinId = "skin_None",
+                VisorId = "visor_EmptyVisor",
+                PetId = "pet_EmptyPet",
             };
 
         // =====================================================================
         //  对外：全场 / 单人
         // =====================================================================
 
-        /// <summary>全场开关。房主调用会同步给所有客户端；接收端传 broadcast:false。</summary>
+        /// <summary>全场开关。发起端先落地再广播；接收端只落地不转发。</summary>
         public static void SetAnonymousAll(bool enabled, bool broadcast = true)
         {
             ApplyGlobalLocal(enabled);
-            if (broadcast && IsHost()) RpcAll.Invoke(enabled);
+            // 不限制房主：房主的 AmClient 为 false，且技能常在客户端触发；
+            // 接收端 handler 不会再转发，不会形成风暴
+            if (broadcast) RpcAll.Invoke(enabled);
         }
 
         /// <summary>
         /// 单个玩家开关。不同来源用不同 <paramref name="tag"/> 隔开，互不影响；
-        /// 房主调用会同步（非房主只本地落地）。
+        /// 发起端先落地再广播，接收端只落地。
         /// </summary>
         public static void SetAnonymous(Player player, bool enabled,
                                         string tag = SingleTag, bool broadcast = true)
@@ -89,7 +95,7 @@ namespace LightInDark.Visual
             if (control == null || string.IsNullOrEmpty(tag)) return;
 
             ApplySingleLocal(control.PlayerId, enabled, tag);
-            if (broadcast && IsHost()) RpcOne.Invoke((control.PlayerId, enabled));
+            if (broadcast) RpcOne.Invoke((control.PlayerId, enabled));
         }
 
         // =====================================================================
@@ -138,16 +144,22 @@ namespace LightInDark.Visual
         {
             _global = enabled;
 
+            int total = 0, applied = 0;
             foreach (var player in Player.AllPlayers)
             {
+                total++;
                 var control = player?.Control;
                 if (control == null) continue;
                 try
                 {
                     if (enabled) OutfitStack.Push(control, CreateAnonymousLayer(GlobalTag));
                     else OutfitStack.Pop(control, GlobalTag);
+                    applied++;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LightLogger.LogWarning($"[PlayerAppearance] 应用到玩家 {control.PlayerId} 失败: {ex}");
+                }
             }
 
             // 关闭时清掉残留（玩家已离开 / 换了 PlayerId 的层不会被上面的循环覆盖）
@@ -156,7 +168,7 @@ namespace LightInDark.Visual
                 try { OutfitStack.PopAll(GlobalTag); } catch { }
             }
 
-            LightLogger.Log($"[PlayerAppearance] 全场小黑人 {(enabled ? "开启" : "关闭")}");
+            LightLogger.Log($"[PlayerAppearance] 全场小黑人 {(enabled ? "开启" : "关闭")}（共 {total} 人，成功 {applied}）");
         }
 
         private static void ApplySingleLocal(byte playerId, bool enabled, string tag)
@@ -213,12 +225,6 @@ namespace LightInDark.Visual
                 _rpcReady = false;
                 LightLogger.LogError("[PlayerAppearance] 注册同步 RPC 失败", ex);
             }
-        }
-
-        private static bool IsHost()
-        {
-            try { return AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost; }
-            catch { return false; }
         }
 
         /// <summary>模组加载时调用一次，保证接收端在别的客户端也注册好。</summary>

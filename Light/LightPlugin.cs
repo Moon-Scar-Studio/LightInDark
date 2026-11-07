@@ -108,7 +108,7 @@ public partial class LightPlugin : BasePlugin
             }
             catch (Exception ex) { LightLogger.LogError("[Load] 修饰器系统初始化失败", ex); }
 
-            Roles.Assignment.RoleHealthCheck.Run(
+            Roles.Assignment.RoleHealthCheck.Run();
 
             try { LightInDark.Configuration.PresetStore.Initialize(); }
             catch (Exception ex) { LightLogger.LogError("[LightPlugin] PresetStore 初始化失败", ex); }
