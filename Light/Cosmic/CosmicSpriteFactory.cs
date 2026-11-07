@@ -62,10 +62,10 @@ internal static class CosmicSpriteFactory
 
             var key = new Key
             {
-                FullId = item.FullId,
+                FullId = $"{item.AddonId}/{item.Path}:{item.PixelsPerUnit}:{item.PivotX}:{item.PivotY}:{item.Frames}:{item.ColorMode}",
                 PlayerColor = item.ColorMode == CosmicColorMode.Player ? playerColor : Color.white,
             };
-            if (FramesCache.TryGetValue(key, out var cached) && cached != null) return cached;
+            if (FramesCache.TryGetValue(key, out var cached) && Alive(cached)) return cached;
 
             var tex = BuildTexture(item, playerColor);
             if (tex == null)
@@ -91,8 +91,9 @@ internal static class CosmicSpriteFactory
             {
                 // ⚠️ 装扮贴图的 ppu 与原版帽子一致（100 ✓）；offset/scale 由使用处处理 ✓
                 var s = Sprite.Create(tex, new Rect(i * w, 0f, w, tex.height),
-                                      new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+                                      new Vector2(item.PivotX, item.PivotY), item.PixelsPerUnit, 0, SpriteMeshType.FullRect);
                 s.name = frames > 1 ? $"{baseName}_f{i}" : baseName;
+                s.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                 result[i] = s;
             }
 
@@ -119,6 +120,7 @@ internal static class CosmicSpriteFactory
         }
         tex.wrapMode = TextureWrapMode.Clamp;
         tex.filterMode = FilterMode.Bilinear;   // 装扮通常要缩小显示 → 双线性更细腻 ✓
+        tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
 
         if (item.ColorMode == CosmicColorMode.Player)
             ApplyPlayerMask(tex, playerColor);
@@ -169,5 +171,16 @@ internal static class CosmicSpriteFactory
     }
 
     /// <summary>清缓存（换局不需要 ✗ —— 装扮是跨局的；换语言/改素材才需要 ✓）</summary>
-    public static void ClearCache() => Cache.Clear();
+    private static bool Alive(Sprite[]? sprites)
+    {
+        if (sprites == null || sprites.Length == 0) return false;
+        foreach (var sprite in sprites) if (sprite == null || sprite.texture == null) return false;
+        return true;
+    }
+
+    public static void ClearCache()
+    {
+        Cache.Clear();
+        FramesCache.Clear();
+    }
 }

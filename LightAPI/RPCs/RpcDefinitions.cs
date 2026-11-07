@@ -663,9 +663,6 @@ namespace LightInDark.RPCs
                 if (killer == null || dying == null) return;
                 if (dying.Data != null && dying.Data.IsDead) return;
 
-                // 注：**这里不再查 `CanBeGuessed`** ✓（2026-10-25 用户要求"不要赌怪猜中时检测"）
-                //    免疫的玩家在赌怪那边 `CanTarget` 里就**没建按钮** ✓ → 根本点不到 ✓
-
                 dying.Die(DeathReason.Exile, false);
 
                 var meeting = MeetingHud.Instance;

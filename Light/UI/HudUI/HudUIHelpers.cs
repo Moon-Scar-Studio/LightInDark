@@ -56,6 +56,8 @@ public static class HudUI
                 }, localOpt.Size ?? ButtonSize.Rectangle, localOpt.Color);
             }
 
+            // ★ 2026-11-03 用户："二级窗口又没用字体" ✓ → 所有二级窗口统一用 Mod 惯用字体（Noto Sans SC ✓）
+            window.ApplyCjkFont();
             return window;
         }
         catch (Exception ex)
@@ -79,18 +81,21 @@ public static class HudUI
             var localOnConfirm = onConfirm;
             var localOnCancel = onCancel;
 
+            // ★ 2026-11-03 用户："那个确认按钮啥的直接用 HudUI 里有的，为什么要自建还带个破颜色"
+            //   → 去掉自建的绿/红 ✗，用 HudUI 的**默认按钮**（无色 ✓，与其它窗口一致 ✓）
             window.AddButton("是", () =>
             {
                 localOnConfirm?.Invoke();
                 window.Close();
-            }, ButtonSize.Rectangle, Color.Green);
+            }, ButtonSize.Rectangle, null);
 
             window.AddButton("否", () =>
             {
                 localOnCancel?.Invoke();
                 window.Close();
-            }, ButtonSize.Rectangle, Color.Red);
+            }, ButtonSize.Rectangle, null);
 
+            window.ApplyCjkFont();
             return window;
         }
         catch (Exception ex)
@@ -118,6 +123,7 @@ public static class HudUI
                 window.Close();
             }, ButtonSize.Rectangle);
 
+            window.ApplyCjkFont();   // ★ 2026-11-03：二级窗口统一用 Mod 字体 ✓
             return window;
         }
         catch (Exception ex)

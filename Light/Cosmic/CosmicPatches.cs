@@ -74,6 +74,8 @@ internal static class CosmicRegistry
                 return;                     // 不置 _built ✓
             }
 
+            CosmicAddonLoader.Load();
+
             foreach (var addon in CosmicAddonLoader.Addons)
             {
                 BuildCategory(addon, "Hats", manager);
@@ -157,10 +159,12 @@ internal static class CosmicRegistry
         d.Free = true;
         d.NotInStore = true;
         d.InFront = !item.BehindBody;          // JSON 的 behindBody = 画在身体后面 ✓
-        d.NoBounce = false;
+        d.NoBounce = item.NoBounce;
         d.BlocksVisors = false;
         d.StoreName = item.DisplayName;
-        d.PreviewCrewmateColor = false;        // ★ 颜色已算进图里 → 用不染色的着色器 ✓
+        d.PreviewCrewmateColor = item.ColorMode == CosmicColorMode.Adaptive;
+        if (item.NosImages.Count > 0) d.ChipOffset = new Vector2(0f, 0.2f);
+        d.hideFlags |= HideFlags.DontUnloadUnusedAsset;
         return d;
     }
 
@@ -188,7 +192,10 @@ internal static class CosmicRegistry
         d.NotInStore = true;
         // ⚠️ `StoreName` 只有 `HatData` 有 ✗（`CosmeticData` 里没有 ✓）→ 这三类不设它 ✓
         d.ChipOffset = new Vector2(item.OffsetX, item.OffsetY);   // 用上了 JSON 的 offset ✓
-        d.PreviewCrewmateColor = false;
+        d.PreviewCrewmateColor = item.ColorMode == CosmicColorMode.Adaptive;
+        d.behindHats = item.BehindHat;
+        if (item.NosImages.Count > 0) d.ChipOffset = new Vector2(0f, 0.2f);
+        d.hideFlags |= HideFlags.DontUnloadUnusedAsset;
         return d;
     }
 
@@ -211,7 +218,17 @@ internal static class CosmicRegistry
     {
         var v = ScriptableObject.CreateInstance<HatViewData>();
         v.name = item.FullId;
-        v.MatchPlayerColor = false;
+        v.MatchPlayerColor = item.ColorMode == CosmicColorMode.Adaptive;
+        v.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        if (item.NosImages.Count > 0)
+        {
+            Sprite? Image(string key) => item.NosImages.TryGetValue(key, out var image)
+                ? CosmicSpriteFactory.Get(image, Color.white) : null;
+            v.MainImage = Image("Main"); v.BackImage = Image("Back");
+            v.LeftMainImage = Image("Flip"); v.LeftBackImage = Image("BackFlip");
+            v.ClimbImage = Image("Climb"); v.LeftClimbImage = Image("ClimbFlip");
+            return v;
+        }
         var s = CosmicSpriteFactory.Get(item, LocalColor());
         if (s != null) { v.MainImage = s; v.BackImage = s; }
         return v;
@@ -230,9 +247,16 @@ internal static class CosmicRegistry
     {
         var v = ScriptableObject.CreateInstance<VisorViewData>();
         v.name = item.FullId;
-        v.MatchPlayerColor = false;
+        v.MatchPlayerColor = item.ColorMode == CosmicColorMode.Adaptive;
+        v.hideFlags |= HideFlags.DontUnloadUnusedAsset;
         var s = CosmicSpriteFactory.Get(item, LocalColor());
         v.IdleFrame = s;
+        if (item.NosImages.Count > 0)
+        {
+            v.IdleFrame = item.NosImages.TryGetValue("Main", out var main) ? CosmicSpriteFactory.Get(main, Color.white) : null;
+            v.LeftIdleFrame = item.NosImages.TryGetValue("Flip", out var flip) ? CosmicSpriteFactory.Get(flip, Color.white) : null;
+            v.ClimbFrame = item.NosImages.TryGetValue("Climb", out var climb) ? CosmicSpriteFactory.Get(climb, Color.white) : null;
+        }
         return v;
     }
 
@@ -300,6 +324,9 @@ internal static class CosmicRegistry
         catch { }
         return Color.white;
     }
+
+    internal static Color ColorOf(int color)
+        => Palette.PlayerColors[Mathf.Clamp(color, 0, Palette.PlayerColors.Length - 1)];
 
     /// <summary>
     /// 把我们的数据塞进 `HatManager` 的对应容器 ✓。
@@ -512,7 +539,7 @@ internal static class CosmicCacheGetPlatePatch
 [HarmonyPatch(typeof(CosmeticData), nameof(CosmeticData.SetPreview))]
 internal static class CosmicSetPreviewPatch
 {
-    public static bool Prefix(CosmeticData __instance, SpriteRenderer renderer)
+    public static bool Prefix(CosmeticData __instance, SpriteRenderer renderer, int color)
     {
         try
         {
@@ -521,12 +548,44 @@ internal static class CosmicSetPreviewPatch
             var id = __instance.ProductId;
             var item = CosmicRegistry.HatItem(id) ?? CosmicRegistry.SkinItem(id)
                        ?? CosmicRegistry.VisorItem(id) ?? CosmicRegistry.PlateItem(id);
+            if (renderer != null)
+            {
+                var oldBack = renderer.transform.Find("NosPreviewBack");
+                if (oldBack != null) oldBack.gameObject.SetActive(false);
+            }
             if (item == null) return true;                  // 原版的数据照旧 ✓
 
             if (renderer == null) return false;             // 没渲染器就什么都不做 ✓（也别让原版去解引用 null ✓）
 
             renderer.sharedMaterial = HatManager.Instance.DefaultShader;   // 不染色 ✓
-            CosmicTabAppender.ApplyItemVisual(renderer, item, CosmicRegistry.LocalColor());
+            CosmicTabAppender.ApplyItemVisual(renderer, item, CosmicRegistry.ColorOf(color));
+            NosCosmeticDriver.ApplyMaterial(renderer, item, color);
+            if (item.NosImages.Count > 0)
+            {
+                var images = NosCosmeticState.Select(item, NosAnimation.Idle, false);
+                var preview = item.NosImages.TryGetValue("Preview", out var explicitPreview) ? explicitPreview : images.Front;
+                NosCosmeticDriver.Render(renderer, preview, color, false);
+                if (images.Back != null)
+                {
+                    var child = renderer.transform.Find("NosPreviewBack");
+                    SpriteRenderer back;
+                    if (child == null)
+                    {
+                        var go = new GameObject("NosPreviewBack");
+                        go.transform.SetParent(renderer.transform, false);
+                        back = go.AddComponent<SpriteRenderer>();
+                    }
+                    else back = child.GetComponent<SpriteRenderer>();
+                    back.gameObject.layer = renderer.gameObject.layer;
+                    back.gameObject.SetActive(true);
+                    back.transform.localPosition = new Vector3(0f, 0f, 0.01f);
+                    back.sortingLayerID = renderer.sortingLayerID;
+                    back.sortingOrder = renderer.sortingOrder - 1;
+                    back.maskInteraction = renderer.maskInteraction;
+                    back.color = renderer.color;
+                    NosCosmeticDriver.Render(back, images.Back, color, false);
+                }
+            }
             return false;
         }
         catch (Exception ex)
@@ -588,6 +647,14 @@ internal static class CosmicHatParentSetHatPatch
             if (sprite == null) return true;
 
             __instance.UnloadAsset();
+            if (item.NosImages.Count > 0)
+            {
+                __instance.viewAsset = new CosmicHatAsset { View = CosmicRegistry.HatViewOf(item)! };
+                __instance.SetMaterialColor(color);
+                __instance.PopulateFromViewData();
+                NosCosmeticDriver.Attach(__instance);
+                return false;
+            }
             CosmicHatParentPopulatePatch.ApplyHatLayers(__instance, item, c);
             return false;
         }
@@ -607,10 +674,17 @@ internal static class CosmicHatParentPopulatePatch
     {
         try
         {
-            var data = __instance != null ? __instance.Hat : null;
+            if (__instance == null) return true;
+            var data = __instance.Hat;
             if (data == null) return true;
             var item = CosmicRegistry.HatItem(data.ProductId);
             if (item == null) return true;
+
+            if (item.NosImages.Count > 0)
+            {
+                // The in-memory view asset supports vanilla bounce/options setup.
+                return true;
+            }
 
             var sprite = CosmicSpriteFactory.Get(item, CosmicRegistry.LocalColor());
             if (sprite == null) return true;

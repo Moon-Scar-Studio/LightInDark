@@ -371,10 +371,23 @@ public static class BackgroundRenderer
     public static void RefreshLayout() => _lastLayout = null;
 
     /// <summary>主菜单每帧驱动（MainMenuPatch.TickAll 里调，由 LightTicker 跨场景驱动）。</summary>
+    /// <summary>
+    /// **原版样式下彻底关掉自定义背景**（用户 2026-11-03："背景图不要…背景图只在原版样式砍掉" ✓）。
+    /// ⚠️ 只屏蔽"显示" ✗，不清用户选的那张图 ✓ —— 切回 MOD / 美化版时立刻恢复 ✓。
+    /// </summary>
+    public static bool Suppressed { get; set; }
+
     public static void Tick()
     {
         try
         {
+            // ① 被屏蔽（原版样式）→ 拆掉已经建出来的背景对象，并直接返回 ✓
+            if (Suppressed)
+            {
+                if (_root != null) Teardown();
+                return;
+            }
+
             // ① 先按场景名变化清一次跨场景状态（修"失败原因一旦非空就永久不重试"）
             ResetSceneStateIfChanged();
 
@@ -410,7 +423,10 @@ public static class BackgroundRenderer
                 return;
             }
 
-            var cam = FindCamera(_root.layer);
+            // ⚠️ 2026-11-03 性能优化（用户："进入主界面非常卡"）：
+            //   `FindCamera` 里有 `Camera.main`（tag 查找）+ `Camera.allCameras`（**每次都分配数组** ✗）
+            //   → 每帧调一次 = 每帧一份 GC 垃圾 ✗ → 改成按 layer 缓存 + 每 60 帧复验一次 ✓
+            var cam = GetCameraCached(_root.layer);
             if (cam == null)
             {
                 DiagReturn("no-camera");
@@ -1432,6 +1448,37 @@ public static class BackgroundRenderer
         foreach (var c in Camera.allCameras)
             if (c != null && c.enabled && (c.cullingMask & bit) != 0) return c;
         return main;
+    }
+
+    // ── 相机缓存（每帧路径用这个 ✓，别再每帧 FindCamera ✗）──
+    private static Camera? _cachedCam;
+    private static int _cachedCamLayer = int.MinValue;
+    private static int _cachedCamFrame = -100000;
+    private const int CameraRecheckFrames = 60;      // 每 60 帧（≈1 秒）复验一次 ✓
+
+    /// <summary>
+    /// 带缓存的相机查找：同 layer 且缓存还活着就复用 ✓，否则每 <see cref="CameraRecheckFrames"/> 帧
+    /// 或换了 layer 时重新查一次 ✓（避免每帧 `Camera.allCameras` 的数组分配 ✗）。
+    /// </summary>
+    private static Camera? GetCameraCached(int layer)
+    {
+        try
+        {
+            bool layerChanged = layer != _cachedCamLayer;
+            bool stale = _cachedCam == null;            // == 走 Unity 假 null 判断 ✓
+            bool due = Time.frameCount - _cachedCamFrame >= CameraRecheckFrames;
+
+            if (!layerChanged && !stale && !due) return _cachedCam;
+
+            _cachedCam = FindCamera(layer);
+            _cachedCamLayer = layer;
+            _cachedCamFrame = Time.frameCount;
+            return _cachedCam;
+        }
+        catch
+        {
+            return FindCamera(layer);
+        }
     }
 
     /// <summary>诊断：把关键状态打一行（排查"看不见"用，AGENTS.md §4.8）。</summary>

@@ -19,6 +19,8 @@ public enum CosmicColorMode
 
     /// <summary>`fixed`：**按原图渲染、完全不换色** ✓（彩色渐变 / 纯黑描边这类素材用 ✓）</summary>
     Fixed = 1,
+    /// <summary>NOS Adaptive：保留原图，使用游戏原生玩家双色材质。</summary>
+    Adaptive = 2,
 }
 
 /// <summary>一件自定义装扮（帽子 / 皮肤 / 面罩 / 名牌 通用 ✓）</summary>
@@ -47,6 +49,14 @@ public sealed class CosmicItem
     public int FrameDelay;
     public bool FlipX;
     public bool BehindBody;
+    public bool NoBounce;
+    public bool BehindHat;
+    public bool BackmostBack;
+    public string Package = "";
+    public float PixelsPerUnit = 100f;
+    public float PivotX = 0.5f;
+    public float PivotY = 0.5f;
+    public readonly Dictionary<string, CosmicItem> NosImages = new(StringComparer.Ordinal);
 
     /// <summary>png 字节（**在 zip 还开着的时候就读出来** ✓ —— 之后不再依赖磁盘 ✓）</summary>
     public byte[] PngBytes = Array.Empty<byte>();
@@ -101,6 +111,11 @@ internal sealed class CosmicItemJson
     [JsonPropertyName("frameDelay")] public int? FrameDelay { get; set; }
     [JsonPropertyName("flipX")] public bool? FlipX { get; set; }
     [JsonPropertyName("behindBody")] public bool? BehindBody { get; set; }
+    [JsonPropertyName("noBounce")] public bool? NoBounce { get; set; }
+    [JsonPropertyName("behindHat")] public bool? BehindHat { get; set; }
+    [JsonPropertyName("backmostBack")] public bool? BackmostBack { get; set; }
+    [JsonPropertyName("package")] public string? Package { get; set; }
+    [JsonPropertyName("nosImages")] public Dictionary<string, string>? NosImages { get; set; }
 }
 
 internal sealed class CosmicOffsetJson
@@ -170,18 +185,36 @@ public static class CosmicAddonLoader
 
         try
         {
+            // Built-in packs use the same parser and stable IDs as external ZIPs.
+            var assembly = typeof(CosmicAddonLoader).Assembly;
+            var resources = assembly.GetManifestResourceNames();
+            Array.Sort(resources, StringComparer.Ordinal);
+            foreach (var resource in resources)
+            {
+                if (!resource.StartsWith("Light.Resources.CosmicAddons.", StringComparison.Ordinal) ||
+                    !resource.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    using var stream = assembly.GetManifestResourceStream(resource);
+                    if (stream == null) continue;
+                    using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+                    var addon = LoadArchive(zip, resource);
+                    if (addon != null) _addons.Add(addon);
+                }
+                catch (Exception ex) { LightLogger.LogWarning($"[CosmicAddons] 内置包 {resource} 加载失败：{ex.Message}"); }
+            }
+
             var dir = AddonsDirectory;
             if (!Directory.Exists(dir))
             {
                 try { Directory.CreateDirectory(dir); } catch { }
                 LightLogger.Log($"[CosmicAddons] 目录不存在，已创建：{dir}（把插件 zip 放进去即可 ✓）");
-                return;
             }
 
-            var zips = Directory.GetFiles(dir, "*.zip", SearchOption.TopDirectoryOnly);
+            var zips = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.zip", SearchOption.TopDirectoryOnly) : Array.Empty<string>();
             Array.Sort(zips, StringComparer.OrdinalIgnoreCase);      // ★ 排序保证"先加载的赢"是**确定**的 ✓
 
-            int ok = 0, failed = 0;
+            int ok = _addons.Count, failed = 0;
             foreach (var zip in zips)
             {
                 try
@@ -210,7 +243,11 @@ public static class CosmicAddonLoader
     private static CosmicAddon? LoadOne(string zipPath)
     {
         using var zip = ZipFile.OpenRead(zipPath);
+        return LoadArchive(zip, zipPath);
+    }
 
+    internal static CosmicAddon? LoadArchive(ZipArchive zip, string zipPath)
+    {
         var info = ReadJson<AddonInfoJson>(zip, "AddonInfo.json");
         if (info == null)
         {
@@ -297,7 +334,8 @@ public static class CosmicAddonLoader
                     Category = category,
                     Path = src.Path!.Replace('\\', '/'),
                     ColorMode = ParseColorMode(src.ColorMode),
-                    Author = string.IsNullOrWhiteSpace(src.Author) ? addon.Author : src.Author!,
+                    Author = src.NosImages != null ? src.Author ?? addon.Author
+                        : string.IsNullOrWhiteSpace(src.Author) ? addon.Author : src.Author!,
                     DisplayName = string.IsNullOrWhiteSpace(src.DisplayName) ? localId : src.DisplayName!,
                     OffsetX = src.Offset?.X ?? 0f,
                     OffsetY = src.Offset?.Y ?? 0f,
@@ -306,6 +344,10 @@ public static class CosmicAddonLoader
                     FrameDelay = src.FrameDelay ?? 0,
                     FlipX = src.FlipX ?? false,
                     BehindBody = src.BehindBody ?? false,
+                    NoBounce = src.NoBounce ?? false,
+                    BehindHat = src.BehindHat ?? false,
+                    BackmostBack = src.BackmostBack ?? false,
+                    Package = src.Package ?? addon.Name,
                 };
 
                 // 全局 id 查重（跨插件 ✓）—— 同样是"先加载的赢" ✓
@@ -324,6 +366,24 @@ public static class CosmicAddonLoader
                     continue;
                 }
                 item.PngBytes = bytes;
+                if (src.NosImages != null)
+                {
+                    item.PixelsPerUnit = 112.875f;
+                    item.PivotX = 0.53f;
+                    item.PivotY = 0.575f;
+                    foreach (var image in src.NosImages)
+                    {
+                        var imageBytes = ReadEntryBytes(zip, image.Value);
+                        if (imageBytes == null || imageBytes.Length == 0)
+                            throw new InvalidDataException($"缺少 NOS 图层 {image.Key}: {image.Value}");
+                        item.NosImages.Add(image.Key, new CosmicItem
+                        {
+                            AddonId = item.AddonId, LocalId = item.LocalId + ":" + image.Key,
+                            Path = image.Value, ColorMode = item.ColorMode, PngBytes = imageBytes,
+                            PixelsPerUnit = item.PixelsPerUnit, PivotX = item.PivotX, PivotY = item.PivotY,
+                        });
+                    }
+                }
 
                 _byFullId[fullId] = item;
                 list.Add(item);
@@ -343,6 +403,7 @@ public static class CosmicAddonLoader
         {
             "fixed" => CosmicColorMode.Fixed,
             "player" => CosmicColorMode.Player,
+            "adaptive" => CosmicColorMode.Adaptive,
             _ => CosmicColorMode.Player,
         };
     }
