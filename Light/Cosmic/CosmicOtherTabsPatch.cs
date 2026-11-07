@@ -121,13 +121,24 @@ internal static class CosmicSkinLayerPatch
 [HarmonyPatch(typeof(VisorLayer), nameof(VisorLayer.SetVisor), typeof(VisorData), typeof(int))]
 internal static class CosmicVisorLayerPatch
 {
-    public static bool Prefix(VisorLayer __instance, VisorData data)
+    public static bool Prefix(VisorLayer __instance, VisorData data, int color)
     {
         try
         {
             if (__instance == null || data == null) return true;
             var item = CosmicRegistry.VisorItem(data.ProductId);
             if (item == null) return true;
+
+            if (item.NosImages.Count > 0)
+            {
+                __instance.UnloadAsset();
+                __instance.visorData = data;
+                __instance.viewAsset = new CosmicVisorAsset { View = CosmicRegistry.VisorViewOf(item)! };
+                __instance.SetMaterialColor(color);
+                __instance.PopulateFromViewData();
+                NosCosmeticDriver.Attach(__instance);
+                return false;
+            }
 
             var view = CosmicRegistry.VisorViewOf(item);
             if (view == null || view.IdleFrame == null) return true;
@@ -136,7 +147,7 @@ internal static class CosmicVisorLayerPatch
             if (img == null) return true;
 
             img.sharedMaterial = HatManager.Instance.DefaultShader;
-            CosmicTabAppender.ApplyItemVisual(img, item, CosmicRegistry.LocalColor());
+            CosmicTabAppender.ApplyItemVisual(img, item, CosmicRegistry.ColorOf(color));
             return false;
         }
         catch (Exception ex)

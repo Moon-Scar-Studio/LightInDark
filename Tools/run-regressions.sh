@@ -8,6 +8,8 @@ PYTHON="${PYTHON:-python3}"
 "$DOTNET" build Light/LightPluginMain.csproj -c Debug --nologo
 "$DOTNET" build Light/LightPluginMain.csproj -c Release --nologo
 "$DOTNET" build VerificationServer/VerificationServer.csproj -c Release --nologo
+"$PYTHON" -m unittest discover -s Tests/Cosmetics -p 'test_*.py' -v
+"$DOTNET" run --project Tests/Cosmetics/Cosmetics.csproj -c Release -- Output/Light.dll
 "$DOTNET" run --project Tests/Regression/Regression.csproj -- \
   VerificationServer/bin/Release/net10.0/LightVerificationServer.dll Output/Light.dll
 "$DOTNET" run --project Tests/Gameplay/Gameplay.csproj -- Output/LightInDark.dll
