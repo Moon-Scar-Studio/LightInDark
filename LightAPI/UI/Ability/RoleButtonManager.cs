@@ -168,6 +168,12 @@ namespace LightInDark.UI.Ability
                 var secondary = hud.SecondaryAbilityButton;
                 if (secondary != null && secondary.gameObject.activeSelf) secondary.gameObject.SetActive(false);
 
+                if (MeetingHud.Instance != null || ExileController.Instance != null)
+                {
+                    var vent = hud.ImpostorVentButton;
+                    if (vent != null && vent.gameObject.activeSelf) vent.gameObject.SetActive(false);
+                }
+
                 // 职业自带击杀按钮（豺狼 / Tester）→ 原版击杀按钮必须收起来，
                 // 否则底层是内鬼时会出现两个击杀按钮
                 if (local.Role.HasOwnKillButton)

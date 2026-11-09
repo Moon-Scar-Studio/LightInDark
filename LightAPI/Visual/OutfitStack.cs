@@ -199,13 +199,14 @@ namespace LightInDark.Visual
             try
             {
                 var cosmetics = control.cosmetics;
-                if (cosmetics != null) cosmetics.nameTextContainer.SetActive(true);
-                control.SetName(def.PlayerName);
-                control.SetColor(def.ColorId);
-                control.SetHat(def.HatId, def.ColorId);
-                control.SetSkin(def.SkinId, def.ColorId);
-                control.SetVisor(def.VisorId, def.ColorId);
-                control.SetPet(def.PetId, def.ColorId);
+                if (cosmetics != null && cosmetics.nameText != null)
+                    cosmetics.nameText.gameObject.SetActive(true);
+                control.RawSetName(def.PlayerName);
+                control.RawSetColor(def.ColorId);
+                control.RawSetHat(def.HatId, def.ColorId);
+                control.RawSetSkin(def.SkinId, def.ColorId);
+                control.RawSetVisor(def.VisorId, def.ColorId);
+                control.RawSetPet(def.PetId, def.ColorId);
             }
             catch (Exception ex)
             {
@@ -244,19 +245,20 @@ namespace LightInDark.Visual
             try
             {
                 // 名字：原版每帧会把 nameText 重置成 Data.PlayerName，
-                // 只 SetName("") 会被立刻覆盖，必须直接隐藏名字容器
+                // 只 RawSetName("") 会被立刻覆盖，必须直接隐藏名字容器
                 var cosmetics = control.cosmetics;
                 if (layer.Name != null)
                 {
                     bool hide = layer.Name.Length == 0;
-                    if (cosmetics != null) cosmetics.nameTextContainer.SetActive(!hide);
-                    if (!hide) control.SetName(layer.Name);
+                    if (cosmetics != null && cosmetics.nameText != null)
+                        cosmetics.nameText.gameObject.SetActive(!hide);
+                    control.RawSetName(hide ? "" : layer.Name);
                 }
-                if (layer.ColorId >= 0) control.SetColor(layer.ColorId);
-                if (layer.HatId != null) control.SetHat(layer.HatId, color);
-                if (layer.SkinId != null) control.SetSkin(layer.SkinId, color);
-                if (layer.VisorId != null) control.SetVisor(layer.VisorId, color);
-                if (layer.PetId != null) control.SetPet(layer.PetId, color);
+                if (layer.ColorId >= 0) control.RawSetColor(layer.ColorId);
+                if (layer.HatId != null) control.RawSetHat(layer.HatId, color);
+                if (layer.SkinId != null) control.RawSetSkin(layer.SkinId, color);
+                if (layer.VisorId != null) control.RawSetVisor(layer.VisorId, color);
+                if (layer.PetId != null) control.RawSetPet(layer.PetId, color);
             }
             catch (Exception ex)
             {

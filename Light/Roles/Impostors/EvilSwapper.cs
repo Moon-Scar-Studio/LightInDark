@@ -11,7 +11,7 @@ public class EvilSwapper : SwapperRole
     public static readonly EvilSwapper MyRole = new();
 
     public override string CodeName => Code;
-    public override LightInDark.Color Color => new(197, 17, 17);
+    public override LightInDark.Color Color => LightInDark.Color.ImpostorColor;
     public override RoleCategory RoleCategory => RoleCategory.Impostor;
     public override bool CanKill => true;
     public override bool CanUseVents => true;

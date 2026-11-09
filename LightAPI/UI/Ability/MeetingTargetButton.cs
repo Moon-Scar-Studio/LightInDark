@@ -85,6 +85,7 @@ public class MeetingTargetButton : RoleButtonBase
             _targets.Add(target);
             if (_gameObject == null) _gameObject = go;
         }
+        LightLogger.Log($"[MeetingTarget] {Role.CodeName} built {_targets.Count} targets (playerStates={meeting.playerStates.Count})");
         Update();
     }
     private void InvokeTarget(Target target)

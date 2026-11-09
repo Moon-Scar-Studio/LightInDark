@@ -34,11 +34,12 @@ namespace LightInDark.Visual
         private const string RpcOneName = "LID.Appearance.AnonymousOne";
 
         private static bool _global;
+        private static byte _globalOwner = byte.MaxValue;
         private static readonly HashSet<byte> _single = new();
 
         private static bool _rpcReady;
-        private static RemoteProcess<bool>? _rpcAll;
-        private static RemoteProcess<(byte, bool)>? _rpcOne;
+        private static RemoteProcess<(byte, bool)>? _rpcAll;
+        private static RemoteProcess<(byte, bool, string)>? _rpcOne;
 
         /// <summary>全场小黑人是否开启（本地状态，房主广播后各端一致）。</summary>
         public static bool IsGlobalAnonymous => _global;
@@ -78,10 +79,26 @@ namespace LightInDark.Visual
         /// <summary>全场开关。发起端先落地再广播；接收端只落地不转发。</summary>
         public static void SetAnonymousAll(bool enabled, bool broadcast = true)
         {
-            ApplyGlobalLocal(enabled);
+            var local = Player.LocalPlayer?.Control;
+            byte owner = enabled && local != null ? local.PlayerId : byte.MaxValue;
+
+            ApplyGlobalLocal(enabled, owner);
+
             // 不限制房主：房主的 AmClient 为 false，且技能常在客户端触发；
             // 接收端 handler 不会再转发，不会形成风暴
-            if (broadcast) RpcAll.Invoke(enabled);
+            if (broadcast) RpcAll.Invoke((owner, enabled));
+        }
+
+        /// <summary>
+        /// 施法者掉线/被移除后本地收尾：没人会替它发 false，各端自己结束。
+        /// 不广播 —— 每台客户端都在做同一件事。
+        /// </summary>
+        public static void DropIfOwnerGone()
+        {
+            if (!_global || _globalOwner == byte.MaxValue) return;
+            if (Player.Get(_globalOwner) != null) return;
+
+            ApplyGlobalLocal(false, byte.MaxValue);
         }
 
         /// <summary>
@@ -95,7 +112,7 @@ namespace LightInDark.Visual
             if (control == null || string.IsNullOrEmpty(tag)) return;
 
             ApplySingleLocal(control.PlayerId, enabled, tag);
-            if (broadcast) RpcOne.Invoke((control.PlayerId, enabled));
+            if (broadcast) RpcOne.Invoke((control.PlayerId, enabled, tag));
         }
 
         // =====================================================================
@@ -133,6 +150,7 @@ namespace LightInDark.Visual
         {
             try { OutfitStack.ClearAll(); } catch { }
             _global = false;
+            _globalOwner = byte.MaxValue;
             _single.Clear();
         }
 
@@ -140,9 +158,10 @@ namespace LightInDark.Visual
         //  本地落地
         // =====================================================================
 
-        private static void ApplyGlobalLocal(bool enabled)
+        private static void ApplyGlobalLocal(bool enabled, byte owner)
         {
             _global = enabled;
+            _globalOwner = enabled ? owner : byte.MaxValue;
 
             int total = 0, applied = 0;
             foreach (var player in Player.AllPlayers)
@@ -191,7 +210,7 @@ namespace LightInDark.Visual
         //  同步
         // =====================================================================
 
-        private static RemoteProcess<bool> RpcAll
+        private static RemoteProcess<(byte, bool)> RpcAll
         {
             get
             {
@@ -200,7 +219,7 @@ namespace LightInDark.Visual
             }
         }
 
-        private static RemoteProcess<(byte, bool)> RpcOne
+        private static RemoteProcess<(byte, bool, string)> RpcOne
         {
             get
             {
@@ -217,8 +236,8 @@ namespace LightInDark.Visual
             try
             {
                 // 接收端只落地，不再转发
-                _rpcAll = new RemoteProcess<bool>(RpcAllName, (enabled, _) => ApplyGlobalLocal(enabled));
-                _rpcOne = new RemoteProcess<(byte, bool)>(RpcOneName, (arg, _) => ApplySingleLocal(arg.Item1, arg.Item2, SingleTag));
+                _rpcAll = new RemoteProcess<(byte, bool)>(RpcAllName, (arg, _) => ApplyGlobalLocal(arg.Item2, arg.Item1));
+                _rpcOne = new RemoteProcess<(byte, bool, string)>(RpcOneName, (arg, _) => ApplySingleLocal(arg.Item1, arg.Item2, arg.Item3));
             }
             catch (Exception ex)
             {

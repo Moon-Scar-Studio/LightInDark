@@ -59,6 +59,15 @@ namespace LightInDark.UI.Ability
                 RegisterVanilla(hud.ReportButton, 999);
                 RegisterVanilla(hud.ImpostorVentButton, 997);
                 RegisterVanilla(hud.KillButton, -1, true);
+
+                try
+                {
+                    LightInDark.Core.LightLogger.Log(
+                        $"[HudGrid] vanilla scales ability={hud.AbilityButton?.transform.lossyScale} " +
+                        $"kill={hud.KillButton?.transform.lossyScale} use={hud.UseButton?.transform.lossyScale} " +
+                        $"vent={hud.ImpostorVentButton?.transform.lossyScale} report={hud.ReportButton?.transform.lossyScale}");
+                }
+                catch { }
             }
             catch (Exception ex) { Core.LightLogger.LogError("[HudGrid.Initialize]", ex); }
         }
@@ -124,6 +133,7 @@ namespace LightInDark.UI.Ability
                 if (_holder != null && Mathf.Abs(_holder.localScale.x - want) > 0.001f)
                 {
                     _holder.localScale = new Vector3(want, want, 1f);
+                    if (_staticHolder != null) _staticHolder.localScale = new Vector3(want, want, 1f);
                     LightInDark.Core.LightLogger.Log($"[HudGrid] 小 HUD={(HudContent.SmallHud ? "开" : "关")} → 按钮阵缩放 {want:0.##}");
                 }
             }

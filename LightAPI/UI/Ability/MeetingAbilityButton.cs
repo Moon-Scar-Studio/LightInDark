@@ -55,33 +55,16 @@ namespace LightInDark.UI.Ability
 
                 try
                 {
-                    // ★★ 2026-10-10 第三次调整（用户："更歪了…你要不也试试用 Hud 的自动排列" ✓）
-                    //   前两次都是"锚定会议界面里的某个元素 + 猜偏移" ✗ —— 结果一次跑到屏幕外 ✗、
-                    //   一次跑到面板中间 ✗ → 说明会议界面的坐标系我们没法靠猜对上 ✓
-                    //
-                    //   ★ 最稳的做法：**直接问 HUD 的原版技能按钮**（`HudManager.Instance.AbilityButton`）——
-                    //     它就在"右下角按钮位" ✓，是原版自己排出来的位置 ✓ 一个像素都不用猜 ✓✓
-                    //     → 把会议按钮摆在它**右边一格** ✓（同一行 ✓）
-                    var hud = HudManager.Instance;
-                    var hudButton = hud != null ? hud.AbilityButton : null;
-                    if (hudButton != null && hudButton.transform.parent != null && _meeting != null
-                        && hudButton.transform.parent == _meeting.transform)
+                    // ★ 锚定会议界面里**真实存在**的"跳过投票"格（`Mayor` 用的也是它 ✓）
+                    //   HUD 的 `AbilityButton` 在另一套画布上，世界坐标换回会议空间会落到面板外面
+                    //   （实测 x≈7.8，屏幕上看不见）。
+                    var skip = _meeting != null ? _meeting.SkipVoteButton : null;
+                    if (skip != null && _meeting != null)
                     {
-                        // 同一个父节点 → 直接复用它算好的 localPosition ✓
-                        var lp = hudButton.transform.localPosition;
-                        x = lp.x + (Corner == MeetingCorner.BottomRight ? 1.0f : -1.0f) * (1f + _slot);
-                        y = lp.y;
-                    }
-                    else
-                    {
-                        // 父节点不同就直接抄"按钮位"的**世界坐标**再换回会议根节点空间 ✓
-                        if (hudButton != null && _meeting != null)
-                        {
-                            var world = hudButton.transform.position;
-                            var local = _meeting.transform.InverseTransformPoint(world);
-                            x = local.x + (Corner == MeetingCorner.BottomRight ? 1.0f : -1.0f) * (1f + _slot);
-                            y = local.y;
-                        }
+                        var local = _meeting.transform.InverseTransformPoint(skip.transform.position);
+                        float dir = Corner == MeetingCorner.BottomRight ? -1f : 1f;
+                        x = local.x + dir * (1.15f * (1f + _slot));
+                        y = local.y;
                     }
                 }
                 catch { }
@@ -126,6 +109,7 @@ namespace LightInDark.UI.Ability
         {
             try
             {
+                LightLogger.Log($"[MeetingAbility] {_config.ResolvedLabel} start: deadObj={IsDeadObject} local={_player?.IsLocal} meeting={meeting != null}");
                 if (IsDeadObject || !_player.IsLocal || meeting == null) return;
                 _meetingActive = true;
                 _meeting = meeting;
@@ -142,13 +126,28 @@ namespace LightInDark.UI.Ability
                 // ⚠️ 同理不用 `HudManager.Instance?.AbilityButton`
                 var hud = HudManager.Instance;
                 var template = hud != null ? hud.AbilityButton : null;
-                if (template == null) return;
-                if (template.transform.parent == null) return;
+                if (template == null) { LightLogger.Log("[MeetingAbility] no HUD AbilityButton template"); return; }
+                if (template.transform.parent == null) { LightLogger.Log("[MeetingAbility] template has no parent"); return; }
 
-                _gameObject = Object.Instantiate(template.gameObject, meeting.transform);
+                // ★ 挂在"跳过投票"格的**父节点**下、直接抄它的 localPosition（`Mayor` 就是这么干的 ✓）
+                //   换算到会议根节点空间会把 y 干到 -12（面板外），挂在别的画布上又对不上。
+                var skip = meeting.SkipVoteButton;
+                if (skip != null && skip.transform.parent != null)
+                {
+                    _gameObject = Object.Instantiate(template.gameObject, skip.transform.parent);
+                    float dir = Corner == MeetingCorner.BottomRight ? -1f : 1f;
+                    _gameObject.transform.localPosition = skip.transform.localPosition
+                        + new Vector3(dir * 1.35f * (1f + _slot), 0f, -1.5f);
+                }
+                else
+                {
+                    _gameObject = Object.Instantiate(template.gameObject, meeting.transform);
+                    _gameObject.transform.localPosition = Position;
+                }
                 _gameObject.name = $"MeetingAbility_{_config.ResolvedLabel}";
-                _gameObject.transform.localPosition = Position;
                 _gameObject.transform.localRotation = Rotation;
+                LightLogger.Log($"[MeetingAbility] anchor parent={(skip != null ? skip.transform.parent.name : "<meeting>")} " +
+                                $"local={_gameObject.transform.localPosition} scale={_gameObject.transform.lossyScale}");
 
                 _actionButton = _gameObject.GetComponent<ActionButton>();
                 _passiveButton = _gameObject.GetComponent<PassiveButton>();
@@ -178,6 +177,7 @@ namespace LightInDark.UI.Ability
                 }
 
                 _gameObject.SetActive(true);
+                LightLogger.Log($"[MeetingAbility] {_config.ResolvedLabel} created at {_gameObject.transform.localPosition} slot={_slot}");
                 Update();
             }
             catch (Exception ex)
