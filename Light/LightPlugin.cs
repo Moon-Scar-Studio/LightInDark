@@ -17,6 +17,7 @@ using LightInDark.Events;
 using LightInDark.Language;
 using LightInDark.Roles;
 using LightInDark.RPCs;
+using LightInDark.Utilities;
 using System;
 using System.Text.Json;
 using UnityEngine.SceneManagement;
@@ -38,11 +39,11 @@ public partial class LightPlugin : BasePlugin
 {
     public const string Id = "cn.moonscar.lid";
     public const string Name = "LightInTheDark";
-    public const string Version = "0.0.1-alpha.1";
+    public const string Version = "0.0.1-alpha.2";
 
-    public const string VisualVersion = "v0.0.1-alpha.1";
+    public const string VisualVersion = "v0.0.1-alpha.2";
 
-    public const string RichVersion = "<color=#4FD1C5>ver</color> <color=#38B2AC>0.0.1-alpha.1</color>";
+    public const string RichVersion = "<color=#4FD1C5>ver</color> <color=#38B2AC>0.0.1-alpha.2</color>";
     public static string AUVersion;
     public static string CursurDataPath = Application.persistentDataPath;
     public static MainColor.ModColorData ColorData;
@@ -57,7 +58,14 @@ public partial class LightPlugin : BasePlugin
         try
         {
             StaticLog = Log; // BepInEx日志
+#if !DEBUG
+            
+                ConsoleManager.DetachConsole();
 
+#else
+            ConsoleManager.CreateConsole();
+            if (LightUtils.IsAprilDay()) ConsoleManager.SetConsoleColor(ConsoleColor.Red);
+#endif
             try
             {
                 RoleTemplate.RoleImageLoader = path => ResourceHelper.LoadSprite(path, RoleTemplate.RoleImagePPU);

@@ -121,6 +121,16 @@
   "role.Sheriff.killCooldown": "击杀冷却",
   "role.Sheriff.kills": "击杀次数",
 
+  "role.EvilSwapper.name": "邪恶的换票师",
+  "role.EvilSwapper.shortdes": "",
+  "role.EvilSwapper.des": "",
+  "role.EvilSwapper.intro": "",
+
+  "role.NiceSwapper.name": "正义的换票师",
+  "role.NiceSwapper.shortdes": "",
+  "role.NiceSwapper.des": "",
+  "role.NiceSwapper.intro": "",
+
   "role.camouflager.name": "隐蔽者",
   "role.camouflager.shortdes": "你可以使用隐蔽给所有人上一层伪装。",
   "role.camouflager.des": "行动阶段，你可以使用技能隐蔽让所有人的外观均变为黑人，混淆视野。",
