@@ -51,23 +51,9 @@ public class Camouflager : RoleTemplate
             if(camoBtn != null)
             {
                 camoBtn.SetEndingJitter(true, 3f);
-                camoBtn.OnEffectStart = () => 
-                {
-                    RpcCamo.Invoke(new(MyPlayer.Control.PlayerId,true));
-                };
-                camoBtn.OnEffectEnd = () =>
-                {
-                    RpcCamo.Invoke(new(MyPlayer.Control.PlayerId, false));
-                };
+                camoBtn.OnEffectStart = () => PlayerAppearance.SetAnonymousAll(true);
+                camoBtn.OnEffectEnd = () => PlayerAppearance.SetAnonymousAll(false);
             }
         }
-        public static RemoteProcess<(byte id, bool on)> RpcCamo = new(
-            "Camouflage",
-            (msg, _) =>
-            {
-                // 广播已由 RpcCamo 负责，这里只落地，避免每个接收端再广播一次
-                PlayerAppearance.SetAnonymousAll(msg.on, broadcast: false);
-            }
-        );
     }
 }

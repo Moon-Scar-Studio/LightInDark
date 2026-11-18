@@ -60,6 +60,8 @@ public static class BuffPatches
         {
             if (AmongUsClient.Instance == null || AmongUsClient.Instance.GameState != AmongUsClient.GameStates.Started) return;
 
+            PlayerAppearance.DropIfOwnerGone();
+
             foreach (var player in Player.AllPlayers)
                 PlayerAppearance.EnsureApplied(player);
         }

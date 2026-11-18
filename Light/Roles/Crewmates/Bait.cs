@@ -46,26 +46,31 @@ public class Bait : RoleTemplate
             needSendBaitMsg = true;
             if (CantBeGuess.Value)
                 MyPlayer.CanBeGuessed = false;
+            else
+                MyPlayer.ResetCanBeGuessed();
         }
         void OnMyPlayerDead(PlayerDeathEvent ev)
         {
             if (ev.Player != MyPlayer.Control) return;// isMyplayer
+            if (ev.Killer == null || !ev.Killer.AmOwner) return;
             LightCoroutine.Start(CoReport(ev.Killer));
         }
         void FlashEv(PlayerMurderEvent ev)
         {
-            if (!AmOwner && ShowFlashWhenPlayerDead.Value && ev.Killer != null && ev.Player != MyPlayer.Control) return;
+            if (!ShowFlashWhenPlayerDead.Value) return;
+            if (!AmOwner) return;
             LightUtils.PlayFlash(Color.Cyan);
         }
         void ShowMsg(MeetingStartEvent ev)
         {
             if (!needSendBaitMsg) return;
             needSendBaitMsg = false;
+            if (!TellEveryBait.Value) return;
             string content = Language.Translate("role.bait.imbait")
                 .Replace("%ME%", MyPlayer.Name)
                 .Replace("%COLOR%", ColorUtility.ToHtmlStringRGB(MyPlayer.PlayerColor.ToUnityColor()));
 
-            RpcSendBaitMsg.Invoke((true,content));
+            RpcSendBaitMsg.Invoke(content);
         }
         // Nebula
         private IEnumerator CoReport(PlayerControl murderer)
@@ -76,18 +81,15 @@ public class Bait : RoleTemplate
 
             murderer.CmdReportDeadBody(MyPlayer.Control.Data);
         }
-        public static RemoteProcess<(bool on,string content)> RpcSendBaitMsg = new(
+        public static RemoteProcess<string> RpcSendBaitMsg = new(
             "RpcSendBaitMsgs",
-            (msg, _) =>
+            (content, _) =>
             {
-                foreach(var p in LightPlayer.AllPlayers)
-                {
-                    var pc = PlayerControl.LocalPlayer;
-                    string orig = pc.name;
-                    pc.SetName("<color=#00FFFF>Bait Message</color>");
-                    HudManager.Instance.Chat.AddChat(pc, msg.content);
-                    pc.SetName(orig);
-                }
+                var pc = PlayerControl.LocalPlayer;
+                string orig = pc.name;
+                pc.SetName("<color=#00FFFF>Bait Message</color>");
+                HudManager.Instance.Chat.AddChat(pc, content);
+                pc.SetName(orig);
             });
     }
 }

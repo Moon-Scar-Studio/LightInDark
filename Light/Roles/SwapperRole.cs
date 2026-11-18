@@ -12,14 +12,13 @@ public abstract class SwapperRole : RoleTemplate
 {
     public override AllocationParameters Allocation => new() { MaxCount = 1, Chance = 30 };
 
-    // ★ 适应当前 `RoleTemplate`：配置改成 **`RoleConfig` 对象 + 数组绑定**（AGENTS §13.11 ✓）
-    static readonly RoleIntConfig SwapsCfg =
+    readonly RoleIntConfig SwapsCfg =
         RoleConfig.Int("swaps", 1, 0, 15);
-    static readonly RoleIntConfig RechargeTasksCfg =
+    readonly RoleIntConfig RechargeTasksCfg =
         RoleConfig.Int("rechargeTasks", 2, 0, 10);
-    static readonly RoleBoolConfig CanOnlySwapOthersCfg =
+    readonly RoleBoolConfig CanOnlySwapOthersCfg =
         RoleConfig.Bool("canOnlySwapOthers", false);
-    static readonly RoleBoolConfig CanCallEmergencyCfg =
+    readonly RoleBoolConfig CanCallEmergencyCfg =
         RoleConfig.Bool("canCallEmergency", false);
 
     public override RoleConfigBase[] RoleConfiguration =>
@@ -53,6 +52,7 @@ public abstract class SwapperRole : RoleTemplate
 
             _charges = ConfigRegistry.GetInt($"role.{CodeName}.swaps");
             _rechargeTasks = ConfigRegistry.GetInt($"role.{CodeName}.rechargeTasks");
+            LightInDark.Core.LightLogger.Log($"[Swapper] {CodeName} activated: charges={_charges} recharge={_rechargeTasks}");
 
             _selectButton = AbilityButtonFactory.CreateMeetingTarget(this, new MeetingTargetButtonConfig
             {
@@ -111,6 +111,7 @@ public abstract class SwapperRole : RoleTemplate
 
             _selected.Add(id);
             _selectButton?.SetTargetColor(id, UnityEngine.Color.yellow);
+            LightInDark.Core.LightLogger.Log($"[Swapper] {CodeName} selected {_selected.Count}: {id}");
         }
 
         private void Confirm()

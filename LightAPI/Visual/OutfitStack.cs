@@ -198,18 +198,39 @@ namespace LightInDark.Visual
 
             try
             {
-                control.SetName(def.PlayerName);
-                control.SetColor(def.ColorId);
-                control.SetHat(def.HatId, def.ColorId);
-                control.SetSkin(def.SkinId, def.ColorId);
-                control.SetVisor(def.VisorId, def.ColorId);
-                control.SetPet(def.PetId, def.ColorId);
+                var cosmetics = control.cosmetics;
+                if (cosmetics != null && cosmetics.nameText != null)
+                    cosmetics.nameText.gameObject.SetActive(true);
+                control.RawSetName(def.PlayerName);
+                control.RawSetColor(def.ColorId);
+                control.RawSetHat(def.HatId, def.ColorId);
+                control.RawSetSkin(def.SkinId, def.ColorId);
+                control.RawSetVisor(def.VisorId, def.ColorId);
+                control.RawSetPet(def.PetId, def.ColorId);
             }
             catch (Exception ex)
             {
                 LightLogger.LogWarning($"[OutfitStack.ApplyDefault] {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// 每个「玩家 + 标签」只打印一次应用内容，用于排查"效果没生效"是没调用还是调用了没反应。
+        /// </summary>
+        private static void LogAppliedOnce(PlayerControl control, OutfitLayer layer, int color)
+        {
+            try
+            {
+                string key = control.PlayerId + "|" + layer.Tag;
+                if (!_logged.Add(key)) return;
+                LightLogger.Log($"[OutfitStack] 应用 {control.PlayerId}/{layer.Tag} " +
+                                $"name={(layer.Name == null ? "null" : layer.Name.Length == 0 ? "<隐藏>" : layer.Name)} " +
+                                $"color={color} hat={layer.HatId} skin={layer.SkinId} visor={layer.VisorId} pet={layer.PetId}");
+            }
+            catch { }
+        }
+
+        private static readonly HashSet<string> _logged = new();
 
         /// <summary>应用一层（只改有值的项 ✓）</summary>
         private static void ApplyLayer(PlayerControl control, OutfitLayer layer)
@@ -219,14 +240,25 @@ namespace LightInDark.Visual
             int color = layer.ColorId >= 0 ? layer.ColorId
                       : (control.Data?.DefaultOutfit?.ColorId ?? 0);
 
+            LogAppliedOnce(control, layer, color);
+
             try
             {
-                if (layer.Name != null) control.SetName(layer.Name);
-                if (layer.ColorId >= 0) control.SetColor(layer.ColorId);
-                if (layer.HatId != null) control.SetHat(layer.HatId, color);
-                if (layer.SkinId != null) control.SetSkin(layer.SkinId, color);
-                if (layer.VisorId != null) control.SetVisor(layer.VisorId, color);
-                if (layer.PetId != null) control.SetPet(layer.PetId, color);
+                // 名字：原版每帧会把 nameText 重置成 Data.PlayerName，
+                // 只 RawSetName("") 会被立刻覆盖，必须直接隐藏名字容器
+                var cosmetics = control.cosmetics;
+                if (layer.Name != null)
+                {
+                    bool hide = layer.Name.Length == 0;
+                    if (cosmetics != null && cosmetics.nameText != null)
+                        cosmetics.nameText.gameObject.SetActive(!hide);
+                    control.RawSetName(hide ? "" : layer.Name);
+                }
+                if (layer.ColorId >= 0) control.RawSetColor(layer.ColorId);
+                if (layer.HatId != null) control.RawSetHat(layer.HatId, color);
+                if (layer.SkinId != null) control.RawSetSkin(layer.SkinId, color);
+                if (layer.VisorId != null) control.RawSetVisor(layer.VisorId, color);
+                if (layer.PetId != null) control.RawSetPet(layer.PetId, color);
             }
             catch (Exception ex)
             {

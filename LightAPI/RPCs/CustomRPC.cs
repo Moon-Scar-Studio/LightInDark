@@ -62,7 +62,8 @@ namespace LightInDark.RPCs
                 int hashValue = hash.ComputeConstantHash();
 
                 // 网络发送
-                if (client.AmClient && client.GameState == InnerNetClient.GameStates.Started)
+                // 注意：房主的 AmClient 为 false，只判断它会导致房主发不出任何自定义 RPC
+                if (client.GameState == InnerNetClient.GameStates.Started)
                 {
                     try
                     {
@@ -141,7 +142,8 @@ namespace LightInDark.RPCs
             try
             {
                 var client = AmongUsClient.Instance;
-                if (client == null || !client.AmClient) return;
+                // 房主的 AmClient 为 false，这里同样只判断连接状态
+                if (client == null || client.GameState != InnerNetClient.GameStates.Started) return;
 
                 var player = PlayerControl.LocalPlayer;
                 if (player == null) return;

@@ -69,6 +69,23 @@ namespace LightInDark.UI.Ability
 
             _gameObject = Object.Instantiate(template.gameObject, template.transform.parent);
             _gameObject.name = $"AbilityButton_{_config.ResolvedLabel}";
+            try
+            {
+                var tgtAction = template.GetComponent<ActionButton>();
+                var tgtSpr = tgtAction != null ? tgtAction.graphic : null;
+                var clSpr = _actionButton != null ? _actionButton.graphic : null;
+                var killSpr = HudManager.Instance != null && HudManager.Instance.KillButton != null
+                    ? HudManager.Instance.KillButton.graphic : null;
+                var useSpr = HudManager.Instance != null && HudManager.Instance.UseButton != null
+                    ? HudManager.Instance.UseButton.graphic : null;
+
+                LightLogger.Log($"[AbilityButton] sizes " +
+                    $"tmpl(local={tgtSpr?.transform.localScale}, bounds={tgtSpr?.bounds.size}, sprite={tgtSpr?.sprite?.name}/{tgtSpr?.sprite?.rect.size}) " +
+                    $"clone(local={clSpr?.transform.localScale}, bounds={clSpr?.bounds.size}) " +
+                    $"kill(bounds={killSpr?.bounds.size}, sprite={killSpr?.sprite?.name}/{killSpr?.sprite?.rect.size}) " +
+                    $"use(bounds={useSpr?.bounds.size}, sprite={useSpr?.sprite?.name}/{useSpr?.sprite?.rect.size})");
+            }
+            catch (Exception ex) { LightLogger.LogWarning($"[AbilityButton] size diag: {ex.Message}"); }
 
             _actionButton = _gameObject.GetComponent<ActionButton>();
             if (_actionButton == null) throw new Exception("ActionButton 组件为 null");
